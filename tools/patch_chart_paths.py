@@ -31,12 +31,12 @@ def _resolve_unzip_charts_dir(repo_root: Path) -> Path:
 
 
 def patch_chart_paths(root_dir: Path, charts_dir: Path) -> int:
-    """Rewrite all chart_path.txt files to point to actual charts_dir.
+    """Normalize all chart_path.txt files to write only the XML basename.
 
     Strategy:
     - For each chart_path.txt, derive chart XML basename from current content
       (fallback to directory name like 'chart123' -> 'chart123.xml').
-    - Overwrite the file with absolute path: charts_dir / basename.
+    - Overwrite the file with just the basename (e.g., 'chart123.xml').
 
     Returns the number of files modified.
     """
@@ -64,8 +64,8 @@ def patch_chart_paths(root_dir: Path, charts_dir: Path) -> int:
                     base = Path(content).name if content else None
             if not base:
                 continue
-            new_path = charts_dir / base
-            new_text = str(new_path)
+            # 仅写入 basename，具体路径由填充工具按 config.yaml 解析
+            new_text = base
             if new_text != content:
                 try:
                     p.write_text(new_text, encoding='utf-8')

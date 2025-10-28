@@ -1,0 +1,33 @@
+# --- 操作系统与 IDE ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# --- Python / 虚拟环境与缓存 ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dylib
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.coverage*
+.tox/
+build/
+dist/
+pip-wheel-metadata/
+*.egg-info/
+.eggs/
+
+# --- 项目输入/输出与日志（建议不入库） ---
+output/
+logs/
+
+# --- 可选：按团队约定忽略的中间数据 ---
+# charts/**/data.csv
+# charts/**/chart_path.txt

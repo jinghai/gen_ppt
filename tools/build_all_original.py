@@ -8,6 +8,9 @@ import yaml
 import logging
 from typing import Dict, Any, List, Optional
 from lxml import etree as ET
+import sys
+import subprocess
+import re
 
 # 工程根目录与路径（gen_ppt 根）
 ROOT = Path(__file__).resolve().parents[1]
@@ -295,6 +298,46 @@ def _validate_against_original(out_ppt: Path, template: Path, chart_names: List[
     return summary
 
 
+def _iter_pages(filter_pages: Optional[List[str]] = None) -> List[Path]:
+    base = ROOT / 'charts'
+    if not base.exists():
+        return []
+    if filter_pages:
+        candidates = [base / p for p in filter_pages]
+    else:
+        candidates = [p for p in base.iterdir() if p.is_dir() and re.match(r'^p\d+$', p.name)]
+    pages = [p for p in candidates if p.exists() and p.is_dir()]
+    return sorted(pages, key=lambda x: x.name)
+
+
+def run_page_build_originals(pages: Optional[List[str]] = None, logger: Optional[logging.Logger] = None) -> Dict[str, int]:
+    """调用 charts 下各页面的 build_original.py（若存在）。
+
+    返回统计：总页面数、尝试执行数、成功数、失败数。
+    """
+    logger = logger or _get_logger(None)
+    page_dirs = _iter_pages(pages)
+    total = len(page_dirs)
+    executed = 0
+    succeeded = 0
+    failed = 0
+    for page in page_dirs:
+        script = page / 'build_original.py'
+        if not script.exists():
+            logger.debug('skip (no build_original.py): %s', page)
+            continue
+        executed += 1
+        cmd = [sys.executable, str(script)]
+        try:
+            logger.info('running build_original.py for %s', page.name)
+            subprocess.run(cmd, cwd=str(page), check=True)
+            succeeded += 1
+        except Exception as e:
+            failed += 1
+            logger.warning('build_original.py failed for %s: %s', page.name, e)
+    return {'total': total, 'executed': executed, 'succeeded': succeeded, 'failed': failed}
+
+
 def build_and_validate(out_path: Path, strict: bool = False, logger: Optional[logging.Logger] = None):
     logger = logger or _get_logger(None)
     if not TEMPLATE_PPT.exists():
@@ -351,10 +394,16 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='使用 original_* 重建原始版 PPT，并校验与模板一致性')
     ap.add_argument('--out', type=Path, default=OUT_PATH, help='输出 PPTX 路径')
     ap.add_argument('--strict', action='store_true', help='若存在不一致则退出码为 2')
+    ap.add_argument('--pages', nargs='*', default=None, help='仅针对指定页面先运行其 build_original.py（如 p10 p12）；默认全部 p*')
+    ap.add_argument('--skip-pages', action='store_true', help='跳过逐页 build_original.py 执行')
     default_log = ROOT / 'logs' / 'build_all_original.log'
     ap.add_argument('--log-file', type=Path, default=default_log, help='日志输出文件路径')
     ap.add_argument('--log-level', default='INFO', choices=['DEBUG','INFO','WARNING','ERROR','CRITICAL'], help='日志级别')
     args = ap.parse_args()
     logger = _get_logger(args.log_file, getattr(logging, args.log_level.upper(), logging.INFO))
     logger.info('Starting build_all_original with logging to %s', args.log_file)
+    if not args.skip_pages:
+        stats = run_page_build_originals(args.pages, logger=logger)
+        logger.info('Per-page build_original summary: total=%d executed=%d succeeded=%d failed=%d',
+                    stats['total'], stats['executed'], stats['succeeded'], stats['failed'])
     build_and_validate(args.out, strict=args.strict, logger=logger)

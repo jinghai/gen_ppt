@@ -162,7 +162,44 @@ def _get(cfg, keys, default=None):
     return cur if cur is not None else default
 
 
+def _charts_dir_from_config(cfg: dict) -> Path:
+    root = Path(__file__).resolve().parents[1]
+    tr = ((cfg.get('project') or {}).get('template_root') or 'input/LRTBH-unzip')
+    trp = Path(tr)
+    if not trp.is_absolute():
+        trp = root / trp
+    d = trp / 'ppt' / 'charts'
+    return d if d.exists() else (trp / 'charts')
+
+
+def resolve_chart_xml_path(raw: Path) -> Path:
+    """根据 config.yaml 解析 chart*.xml 绝对路径（兼容相对/绝对/只含文件名）。"""
+    if raw.exists():
+        return raw
+    cfg = _load_config()
+    charts_dir = _charts_dir_from_config(cfg)
+    # 仅文件名
+    cand = charts_dir / raw.name
+    if cand.exists():
+        return cand
+    # 相对路径：尝试以仓库根与 template_root 解析
+    if not raw.is_absolute():
+        repo_root = Path(__file__).resolve().parents[1]
+        cand2 = repo_root / raw
+        if cand2.exists():
+            return cand2
+        cand3 = charts_dir.parent.parent / raw  # template_root / <raw>
+        if cand3.exists():
+            return cand3
+    # 绝对路径失效：回退 basename
+    fallback = charts_dir / raw.name
+    if fallback.exists():
+        return fallback
+    raise FileNotFoundError(f"chart xml not found. tried: {raw}, {cand}, {fallback}")
+
+
 def fill_chart(chart_xml_path: Path, series_data: list, category_labels: list):
+    chart_xml_path = resolve_chart_xml_path(chart_xml_path)
     tree = etree.parse(str(chart_xml_path))
     root = tree.getroot()
     plot = root.find('c:chart/c:plotArea', namespaces=NS)

@@ -68,14 +68,15 @@ def ensure_chart_paths_and_fillers(pages: List[str], summary: Dict[str, object])
             cdir = pdir / chart_id
             cdir.mkdir(parents=True, exist_ok=True)
             chart_xml = charts_root / ch
-            # chart_path.txt 写入绝对路径，避免 cwd 影响
+            # chart_path.txt 写入 basename，路径解析交由工具统一完成
             chart_path = cdir / 'chart_path.txt'
             need_write = (not chart_path.exists())
             current = chart_path.read_text(encoding='utf-8').strip() if chart_path.exists() else ''
-            if not current or not Path(current).exists():
+            # 若当前为空或为无效绝对路径，则重写为 basename
+            if (not current) or (Path(current).is_absolute() and not Path(current).exists()) or ('/' in current or '\\' in current):
                 need_write = True
             if need_write:
-                chart_path.write_text(str(chart_xml), encoding='utf-8')
+                chart_path.write_text(chart_xml.name, encoding='utf-8')
                 (summary.setdefault('chart_paths_written', [])).append(str(chart_path))
             # 如缺少 fill.py 则补充模板，不覆盖已有
             filler = cdir / 'fill.py'

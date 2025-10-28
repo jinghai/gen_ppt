@@ -1,1 +1,1 @@
-/Users/jinghai/coder/neticle-data-sync_v1/gen_ppt/input/LRTBH-unzip/ppt/charts/chart17.xml
+chart17.xml

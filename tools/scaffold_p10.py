@@ -54,8 +54,8 @@ def main():
         # write placeholders
         (dest_dir / 'labels.json').write_text(json.dumps(SCAFFOLD[c]['labels'], ensure_ascii=False, indent=2), encoding='utf-8')
         (dest_dir / 'series.json').write_text(json.dumps(SCAFFOLD[c]['series'], ensure_ascii=False, indent=2), encoding='utf-8')
-        # write pointers
-        (dest_dir / 'chart_path.txt').write_text(str(chart_path), encoding='utf-8')
+        # write pointers：仅写入 chart 名称，路径解析走统一逻辑
+        (dest_dir / 'chart_path.txt').write_text(c, encoding='utf-8')
     print('scaffolded p10 charts at', OUT)
 
 if __name__ == '__main__':

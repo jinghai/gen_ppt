@@ -12,6 +12,7 @@ CHARTS_DIR = TOOLS_DIR.parent / 'charts'
 
 sys.path.append(str(TOOLS_DIR))
 from extract_chart_cache import parse_chart_xml  # noqa: E402
+from fill_chart_xml import resolve_chart_xml_path  # type: ignore
 
 
 def read_chart_xml_path(chart_dir: Path) -> Tuple[Path, str]:
@@ -19,9 +20,8 @@ def read_chart_xml_path(chart_dir: Path) -> Tuple[Path, str]:
     if not p.exists():
         raise FileNotFoundError(f"missing chart_path.txt in {chart_dir}")
     raw = p.read_text(encoding='utf-8').strip()
-    xml_path = Path(raw)
-    if not xml_path.exists():
-        raise FileNotFoundError(f"chart xml not found: {xml_path}")
+    # 支持相对/仅文件名：统一解析为绝对路径
+    xml_path = resolve_chart_xml_path(Path(raw))
     chart_name = xml_path.name  # e.g. chart10.xml
     return xml_path, chart_name
 

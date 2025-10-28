@@ -452,8 +452,8 @@ def _ensure_chart_dir(page_dir: Path, chart_name: str):
     num = chart_name.replace('chart','').replace('.xml','')
     chart_dir = page_dir / f'chart{num}'
     chart_dir.mkdir(parents=True, exist_ok=True)
-    # chart_path.txt
-    (chart_dir / 'chart_path.txt').write_text(str(_charts_dir(UNZIP_ROOT) / chart_name), encoding='utf-8')
+    # chart_path.txt：仅写入 chart basename，路径解析由工具统一完成
+    (chart_dir / 'chart_path.txt').write_text(chart_name, encoding='utf-8')
     # fill.py
     (chart_dir / 'fill.py').write_text(FILL_TEMPLATE, encoding='utf-8')
 

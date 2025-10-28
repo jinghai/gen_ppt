@@ -12,20 +12,20 @@ def _resolve_tpl() -> Path:
         cfg = yaml.safe_load((BASE / 'config.yaml').read_text(encoding='utf-8')) or {}
     except Exception:
         cfg = {}
-    op = (cfg.get('project') or {}).get('original_ppt', 'ppt/input/LRTBH.pptx')
+    op = (cfg.get('project') or {}).get('original_ppt', 'input/LRTBH.pptx')
     p = Path(op)
     if not p.is_absolute():
-        p = BASE.parent.parent / op
+        p = BASE / op
     return p
 def _resolve_out() -> Path:
     try:
         cfg = yaml.safe_load((BASE / 'config.yaml').read_text(encoding='utf-8')) or {}
     except Exception:
         cfg = {}
-    root = (cfg.get('project') or {}).get('output_root', 'ppt/output')
+    root = (cfg.get('project') or {}).get('output_root', 'output')
     p = Path(root)
     if not p.is_absolute():
-        p = BASE.parent.parent / root
+        p = BASE / root
     return p / f'p{SLIDE_NO}-original.pptx'
 TPL = _resolve_tpl()
 OUT = _resolve_out()
