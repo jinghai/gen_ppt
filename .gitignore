@@ -27,6 +27,7 @@ pip-wheel-metadata/
 # --- 项目输入/输出与日志（建议不入库） ---
 output/
 logs/
+tmp/
 
 # --- 可选：按团队约定忽略的中间数据 ---
 # charts/**/data.csv

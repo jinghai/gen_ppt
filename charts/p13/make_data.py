@@ -1,37 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # 生成该页的真实数据 JSON：
-# - 类别图（bar/pie/area/doughnut）：7 品牌 SOV（当月占比，百分比，保留 1 位）
-# - 散点/线图：Lenovo vs Others 的日级趋势（y 为品牌提及数；x 按 axis_day_base 映射）
-# 缺失数据保持为空或根据 fill_policy 保留原始缓存。
+# - 类别图（pie/bar/area/doughnut）：Lenovo 当月情感分布（Positive/Neutral/Negative 占比，保留 1 位）
+# - 散点/线图：Lenovo 日级情感趋势（3 条序列：Pos/Neu/Neg；y 为百分比，x 按 axis_day_base 映射）
+# 若数据缺失，回退到 original_* 缓存以保证流程不中断。
 from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 import pandas as pd
 import yaml
 
 ROOT = Path(__file__).resolve().parent
-# gen_ppt 根目录（charts/pXX/ 的上两级）
-GEN = Path(__file__).resolve().parents[2]
 
-# 可选的仓库根（用于读取 compute_metrics.yaml 的时间窗口）
-REPO_CANDIDATES = [GEN.parent, GEN]
-REPO_ROOT = None
-CFG_PATH = None
-for base in REPO_CANDIDATES:
-    candidate = base / 'compute_metrics.yaml'
-    if candidate.exists():
-        REPO_ROOT = base
-        CFG_PATH = candidate
-        break
-if REPO_ROOT is None:
-    REPO_ROOT = GEN.parent
-    CFG_PATH = REPO_ROOT / 'compute_metrics.yaml'
+def _find_gen_root() -> Path:
+    cur = ROOT
+    while cur.parent != cur:
+        if (cur / 'config.yaml').exists() and (cur / 'input').exists():
+            return cur
+        cur = cur.parent
+    return Path(__file__).resolve().parents[2]
 
+GEN = _find_gen_root()
 METRICS_DB_DEFAULT = GEN / 'input' / 'metrics_v5.db'
 
 def _resolve_unz_root() -> Path:
@@ -54,6 +47,8 @@ UNZIPPED_CHARTS = _charts_dir(_resolve_unz_root())
 @dataclass
 class Config:
     brands_order: List[str]
+    country_id: int
+    base_brand: str
     output_db: Path
     start_date: str
     end_date: str
@@ -61,17 +56,42 @@ class Config:
 
 
 def _load_yaml_cfg() -> Config:
-    # 全局填充策略与品牌/时间
     base_cfg = yaml.safe_load((GEN / 'config.yaml').read_text(encoding='utf-8'))
-    brands_order = (base_cfg.get('filters') or {}).get('brands') or []
-    output_db = Path(((base_cfg.get('data_sources') or {}).get('metrics_db') or METRICS_DB_DEFAULT))
-    if not output_db.is_absolute():
-        output_db = GEN / output_db
-    tr = (yaml.safe_load(CFG_PATH.read_text(encoding='utf-8')).get('time_range') or {}) if CFG_PATH and CFG_PATH.exists() else {}
-    start_date = str(tr.get('start_date') or '2025-08-01')
-    end_date = str(tr.get('end_date') or '2025-08-31')
+    filters_cfg = (base_cfg.get('filters') or {})
+    brands_order = filters_cfg.get('brands') or []
+    country_id = int(filters_cfg.get('countryId') or 39)
+    base_brand = str(filters_cfg.get('brand_key') or (brands_order[0] if brands_order else 'Lenovo')).strip().lower()
+
+    metrics_db_value = ((base_cfg.get('data_sources') or {}).get('metrics_db') or METRICS_DB_DEFAULT)
+    metrics_db_path = metrics_db_value if isinstance(metrics_db_value, Path) else Path(metrics_db_value)
+    if not metrics_db_path.is_absolute():
+        metrics_db_path = (GEN / metrics_db_path).resolve()
+    output_db = metrics_db_path
+
+    update_cfg = (base_cfg.get('update') or {})
+    start_date = str(update_cfg.get('start_date') or '2025-08-01')
+    end_date = str(update_cfg.get('end_date') or '2025-08-31')
+
     axis_day_base = int((base_cfg.get('fill_policy') or {}).get('axis_day_base', 20300))
-    return Config(brands_order=brands_order, output_db=output_db, start_date=start_date, end_date=end_date, axis_day_base=axis_day_base)
+    # 允许局部覆盖 axis_day_base
+    try:
+        local_cfg = yaml.safe_load((ROOT / 'config.yaml').read_text(encoding='utf-8')) or {}
+    except Exception:
+        local_cfg = {}
+    if isinstance(local_cfg.get('fill_policy'), dict) and 'axis_day_base' in local_cfg['fill_policy']:
+        try:
+            axis_day_base = int(local_cfg['fill_policy']['axis_day_base'])
+        except Exception:
+            pass
+    return Config(
+        brands_order=brands_order,
+        country_id=country_id,
+        base_brand=base_brand,
+        output_db=output_db,
+        start_date=start_date,
+        end_date=end_date,
+        axis_day_base=axis_day_base,
+    )
 
 
 def _connect_sqlite(path: Path) -> sqlite3.Connection:
@@ -87,79 +107,157 @@ def _days_range(start_date: str, end_date: str) -> List[str]:
     return [d.strftime('%Y-%m-%d') for d in idx]
 
 
-# ---------- SOV 百分比 ----------
+def _normalize_100(values: List[float]) -> List[float]:
+    """Adjust values so that their rounded sum equals 100.0.
+    Keep one decimal place and add the residual to the largest component.
+    """
+    if not values:
+        return values
+    rounded = [round(v, 1) for v in values]
+    s = round(sum(rounded), 1)
+    diff = round(100.0 - s, 1)
+    if abs(diff) >= 0.05:  # avoid floating noise like -0.0
+        # add the residual to the max component to preserve ordering
+        i = max(range(len(rounded)), key=lambda k: rounded[k])
+        rounded[i] = round(rounded[i] + diff, 1)
+        # clamp
+        rounded[i] = max(0.0, min(100.0, rounded[i]))
+    # ensure overall bounds
+    return rounded
 
-def make_sov(cfg: Config, conn: sqlite3.Connection) -> Tuple[List[str], List[float]]:
+
+# ---------- chart10：Lenovo 当月情感分布（百分比） ----------
+
+def make_chart10(cfg: Config, conn: sqlite3.Connection) -> Tuple[List[str], List[float]]:
     month_label = _month_label(cfg.start_date)
-    q = f"""
-    SELECT countryId, month, brand, brand_mentions, total_mentions
+    q = """
+    SELECT countryId, month, brand,
+           SUM(COALESCE(positive_mentions,0)) as positive_mentions,
+           SUM(COALESCE(neutral_mentions,0))  as neutral_mentions,
+           SUM(COALESCE(negative_mentions,0)) as negative_mentions
     FROM brand_metrics_month
     WHERE month = ?
-      AND brand IN ({','.join(['?'] * len(cfg.brands_order))})
+      AND countryId = ?
+      AND LOWER(brand) = ?
+    GROUP BY countryId, month, brand
     """
-    params = [month_label] + cfg.brands_order
+    params = [month_label, cfg.country_id, cfg.base_brand]
     df = pd.read_sql_query(q, conn, params=params)
     if df.empty:
-        return [], []
-    denom = df.groupby(['countryId','month'])['total_mentions'].max().sum()
+        return _fallback_chart10()
+    p = float(df['positive_mentions'].sum())
+    n = float(df['neutral_mentions'].sum())
+    ng = float(df['negative_mentions'].sum())
+    denom = p + n + ng
     if denom <= 0:
-        return [], []
-    brand_mentions = (
-        df.groupby('brand')['brand_mentions']
-          .sum()
-          .reindex(cfg.brands_order)
-          .fillna(0)
-          .astype(float)
-          .tolist()
-    )
-    sov = [round(v / float(denom) * 100.0, 1) for v in brand_mentions]
-    labels = [b.capitalize() for b in cfg.brands_order]
-    return labels, sov
+        return _fallback_chart10()
+    vals = [p/denom*100.0, n/denom*100.0, ng/denom*100.0]
+    vals = _normalize_100(vals)
+    labels = ['Positive','Neutral','Negative']
+    return labels, vals
 
 
-# ---------- Lenovo vs Others 日级 ----------
+def _fallback_chart10() -> Tuple[List[str], List[float]]:
+    chart_dir = ROOT / 'chart10'
+    try:
+        series_raw = json.loads((chart_dir / 'original_series.json').read_text(encoding='utf-8'))
+        if isinstance(series_raw, list) and series_raw:
+            if isinstance(series_raw[0], dict):
+                values = series_raw[0].get('values', [])
+            elif isinstance(series_raw[0], (int, float)):
+                values = series_raw
+            else:
+                values = series_raw[0]
+        else:
+            values = []
+    except Exception:
+        values = []
+    labels = []
+    if not values:
+        labels = []
+    else:
+        labels = [f'Slice {i+1}' for i in range(len(values))]
+    return labels, [float(x) for x in values]
 
-def make_trend_lenovo_vs_others(cfg: Config, conn: sqlite3.Connection) -> List[Dict[str, object]]:
-    brands = cfg.brands_order
-    if not brands:
-        return []
-    base_brand = 'lenovo' if 'lenovo' in brands else brands[0]
+
+# ---------- chart11：Lenovo 日级情感趋势（Pos/Neu/Neg 三条曲线） ----------
+
+def make_chart11(cfg: Config, conn: sqlite3.Connection) -> List[Dict[str, object]]:
     days = _days_range(cfg.start_date, cfg.end_date)
-    q = f"""
-    SELECT countryId, day, brand, brand_mentions
+    q = """
+    SELECT day,
+           SUM(COALESCE(positive_mentions,0)) as positive_mentions,
+           SUM(COALESCE(neutral_mentions,0))  as neutral_mentions,
+           SUM(COALESCE(negative_mentions,0)) as negative_mentions
     FROM brand_metrics_day
     WHERE day >= ? AND day <= ?
-      AND brand IN ({','.join(['?'] * len(brands))})
+      AND countryId = ?
+      AND LOWER(brand) = ?
+    GROUP BY day
     """
-    params = [cfg.start_date, cfg.end_date] + brands
+    params = [cfg.start_date, cfg.end_date, cfg.country_id, cfg.base_brand]
     df = pd.read_sql_query(q, conn, params=params)
     if df.empty:
-        return []
-    gb = df.groupby(['day','brand'])['brand_mentions'].sum().reset_index()
-    y1: List[float] = []
-    y2: List[float] = []
+        return _fallback_chart11()
+    df = df.set_index('day')
+    pos_counts: List[float] = []
+    neu_counts: List[float] = []
+    neg_counts: List[float] = []
     for d in days:
-        v_brand = gb.loc[(gb['day'] == d) & (gb['brand'] == base_brand), 'brand_mentions']
-        v_brand = float(v_brand.sum()) if not v_brand.empty else 0.0
-        v_others = gb.loc[(gb['day'] == d) & (gb['brand'] != base_brand), 'brand_mentions']
-        v_others = float(v_others.sum()) if not v_others.empty else 0.0
-        y1.append(v_brand)
-        y2.append(v_others)
+        if d in df.index:
+            row = df.loc[d]
+            pos_counts.append(float(row['positive_mentions']))
+            neu_counts.append(float(row['neutral_mentions']))
+            neg_counts.append(float(row['negative_mentions']))
+        else:
+            pos_counts.append(0.0)
+            neu_counts.append(0.0)
+            neg_counts.append(0.0)
+    y_pos: List[float] = []
+    y_neu: List[float] = []
+    y_neg: List[float] = []
+    for p, n, ng in zip(pos_counts, neu_counts, neg_counts):
+        denom = p + n + ng
+        if denom > 0:
+            vals = _normalize_100([p / denom * 100.0, n / denom * 100.0, ng / denom * 100.0])
+            y_pos.append(vals[0])
+            y_neu.append(vals[1])
+            y_neg.append(vals[2])
+        else:
+            y_pos.append(0.0)
+            y_neu.append(0.0)
+            y_neg.append(0.0)
     x = [float(cfg.axis_day_base + i + 1) for i in range(len(days))]
     return [
-        {'name': base_brand.capitalize(), 'x': x, 'y': y1, 'points': [[x[i], y1[i]] for i in range(len(x))]},
-        {'name': 'Others', 'x': x, 'y': y2, 'points': [[x[i], y2[i]] for i in range(len(x))]},
+        {'name': 'Positive', 'x': x, 'y': y_pos, 'points': [[x[i], y_pos[i]] for i in range(len(x))]},
+        {'name': 'Neutral',  'x': x, 'y': y_neu, 'points': [[x[i], y_neu[i]] for i in range(len(x))]},
+        {'name': 'Negative', 'x': x, 'y': y_neg, 'points': [[x[i], y_neg[i]] for i in range(len(x))]},
     ]
 
 
+def _fallback_chart11() -> List[Dict[str, object]]:
+    chart_dir = ROOT / 'chart11'
+    try:
+        data = json.loads((chart_dir / 'original_scatter.json').read_text(encoding='utf-8'))
+        out = []
+        for s in data:
+            name = s.get('name') or None
+            x = s.get('x') or [p[0] for p in (s.get('points') or [])]
+            y = s.get('y') or [p[1] for p in (s.get('points') or [])]
+            out.append({'name': name, 'x': x, 'y': y, 'points': [[x[i] if i < len(x) else None, y[i] if i < len(y) else None] for i in range(max(len(x or []), len(y or [])))]})
+        return out
+    except Exception:
+        return []
+
+
 def write_cat_json(chart_dir: Path, labels: List[str], values: List[float]):
-    obj = {'labels': labels, 'series': [{'name': None, 'values': values}]}
+    obj: Dict[str, object] = {'labels': labels, 'series': [{'name': None, 'values': values}]}
     (chart_dir / 'data.json').write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
     (chart_dir / 'final_data.json').write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
 def write_scatter_json(chart_dir: Path, series: List[Dict[str, object]]):
-    obj = {'scatter_series': series}
+    obj: Dict[str, object] = {'scatter_series': series}
     (chart_dir / 'data.json').write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
     (chart_dir / 'final_data.json').write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
 
@@ -176,13 +274,71 @@ def _chart_type(chart_xml: Path) -> str:
     return 'unknown'
 
 
+def compute_engagement_metrics(cfg: Config, conn: sqlite3.Connection) -> Dict[str, object]:
+    """Compute Lenovo engagement metrics within the date window.
+    Engagement volume = total_interactions.
+    IPM (interactions per mention) = total_interactions / total_mentions.
+    Returns a dict to be embedded under 'metrics'.
+    """
+    days = _days_range(cfg.start_date, cfg.end_date)
+    q = """
+    SELECT day,
+           SUM(COALESCE(total_interactions,0)) as total_interactions,
+           SUM(COALESCE(total_mentions,0))      as total_mentions
+    FROM brand_metrics_day
+    WHERE day >= ? AND day <= ?
+      AND countryId = ?
+      AND LOWER(brand) = ?
+    GROUP BY day
+    """
+    params = [cfg.start_date, cfg.end_date, cfg.country_id, cfg.base_brand]
+    df = pd.read_sql_query(q, conn, params=params)
+    if df.empty:
+        return {
+            'engagement_total_month': 0,
+            'ipm_month': 0.0,
+            'by_day': {'date': days, 'engagement': [0.0]*len(days), 'ipm': [0.0]*len(days)},
+        }
+    df = df.set_index('day')
+    eng_day: List[float] = []
+    ipm_day: List[float] = []
+    mentions_day_sum = 0.0
+    for d in days:
+        if d in df.index:
+            row = df.loc[d]
+            eng = float(row['total_interactions'] or 0.0)
+            m = float(row['total_mentions'] or 0.0)
+            eng_day.append(eng)
+            ipm_day.append(round(eng / m, 4) if m > 0 else 0.0)
+            mentions_day_sum += m
+        else:
+            eng_day.append(0.0)
+            ipm_day.append(0.0)
+    eng_month = float(sum(eng_day))
+    ipm_month = round(eng_month / mentions_day_sum, 4) if mentions_day_sum > 0 else 0.0
+    return {
+        'engagement_total_month': int(eng_month),
+        'ipm_month': ipm_month,
+        'by_day': {'date': days, 'engagement': eng_day, 'ipm': ipm_day},
+    }
+
+
 def main() -> int:
     page_dir = ROOT
     cfg = _load_yaml_cfg()
     if not cfg.output_db.exists():
         print('metrics_v5.db 不存在：', cfg.output_db)
+        # 仍写入兜底，保证流程不中断
+        # chart10
+        labels10, values10 = _fallback_chart10()
+        write_cat_json(page_dir / 'chart10', labels10, values10)
+        # chart11
+        series11 = _fallback_chart11()
+        write_scatter_json(page_dir / 'chart11', series11)
         return 1
     with _connect_sqlite(cfg.output_db) as conn:
+        # 计算本页 Engagement 指标，附加到 JSON（方便备注或其它页面复用）
+        metrics = compute_engagement_metrics(cfg, conn)
         # 遍历当前页所有 chart*
         import re as _re
         for chart_dir in sorted([p for p in page_dir.iterdir() if p.is_dir() and _re.match(r'^chart\d+$', p.name)]):
@@ -202,11 +358,15 @@ def main() -> int:
                 continue
             t = _chart_type(chart_xml)
             if t == 'scatterChart' or t == 'lineChart':
-                series = make_trend_lenovo_vs_others(cfg, conn)
-                write_scatter_json(chart_dir, series)
+                series = make_chart11(cfg, conn)
+                obj: Dict[str, object] = {'scatter_series': series, 'metrics': metrics}
+                (chart_dir / 'data.json').write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
+                (chart_dir / 'final_data.json').write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
             elif t in ('barChart','pieChart','areaChart','doughnutChart'):
-                labels, values = make_sov(cfg, conn)
-                write_cat_json(chart_dir, labels, values)
+                labels, values = make_chart10(cfg, conn)
+                obj: Dict[str, object] = {'labels': labels, 'series': [{'name': None, 'values': values}], 'metrics': metrics}
+                (chart_dir / 'data.json').write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
+                (chart_dir / 'final_data.json').write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
             else:
                 print('未知图表类型，跳过：', chart_xml)
     print('数据已生成：', ROOT)

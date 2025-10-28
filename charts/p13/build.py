@@ -41,7 +41,7 @@ APP_XML = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 '''
 
 CHARTS_DIR = (UNZ / 'ppt' / 'charts') if (UNZ / 'ppt' / 'charts').exists() else (UNZ / 'charts')
-CHARTS_RELS_DIR = UNZ / 'charts' / '_rels'
+CHARTS_RELS_DIR = CHARTS_DIR / '_rels'
 
 def build():
     # 使用完整模板复制并仅保留第13页，同时替换图表（如有）
@@ -51,16 +51,16 @@ def build():
         ct_bytes = tpl.read('[Content_Types].xml')
         
         # 预加载模板中的图表及关系（作为回退）
-        chart8_tpl = tpl.read('ppt/charts/chart8.xml')
-        chart9_tpl = tpl.read('ppt/charts/chart9.xml')
-        chart8_rels_tpl = tpl.read('ppt/charts/_rels/chart8.xml.rels')
-        chart9_rels_tpl = tpl.read('ppt/charts/_rels/chart9.xml.rels')
+        chart10_tpl = tpl.read('ppt/charts/chart10.xml')
+        chart11_tpl = tpl.read('ppt/charts/chart11.xml')
+        chart10_rels_tpl = tpl.read('ppt/charts/_rels/chart10.xml.rels')
+        chart11_rels_tpl = tpl.read('ppt/charts/_rels/chart11.xml.rels')
 
     # 使用缓存的图表文件（如果存在）
-    chart8_bytes = (CHARTS_DIR / 'chart8.xml').read_bytes() if (CHARTS_DIR / 'chart8.xml').exists() else chart8_tpl
-    chart9_bytes = (CHARTS_DIR / 'chart9.xml').read_bytes() if (CHARTS_DIR / 'chart9.xml').exists() else chart9_tpl
-    chart8_rels_bytes = (CHARTS_RELS_DIR / 'chart8.xml.rels').read_bytes() if (CHARTS_RELS_DIR / 'chart8.xml.rels').exists() else chart8_rels_tpl
-    chart9_rels_bytes = (CHARTS_RELS_DIR / 'chart9.xml.rels').read_bytes() if (CHARTS_RELS_DIR / 'chart9.xml.rels').exists() else chart9_rels_tpl
+    chart10_bytes = (CHARTS_DIR / 'chart10.xml').read_bytes() if (CHARTS_DIR / 'chart10.xml').exists() else chart10_tpl
+    chart11_bytes = (CHARTS_DIR / 'chart11.xml').read_bytes() if (CHARTS_DIR / 'chart11.xml').exists() else chart11_tpl
+    chart10_rels_bytes = (CHARTS_RELS_DIR / 'chart10.xml.rels').read_bytes() if (CHARTS_RELS_DIR / 'chart10.xml.rels').exists() else chart10_rels_tpl
+    chart11_rels_bytes = (CHARTS_RELS_DIR / 'chart11.xml.rels').read_bytes() if (CHARTS_RELS_DIR / 'chart11.xml.rels').exists() else chart11_rels_tpl
 
     # 过滤 presentation.rels：仅保留 slide13（重定向到 slide1）与非 slide 关系
     def filter_pres_rels(rels_bytes: bytes):
@@ -128,14 +128,14 @@ def build():
                 elif name == f'ppt/slides/_rels/slide{SLIDE_NO}.xml.rels':
                     # 重命名为 slide1.xml.rels
                     z.writestr('ppt/slides/_rels/slide1.xml.rels', tpl.read(name))
-                elif name == 'ppt/charts/chart8.xml':
-                    z.writestr(name, chart8_bytes)
-                elif name == 'ppt/charts/chart9.xml':
-                    z.writestr(name, chart9_bytes)
-                elif name == 'ppt/charts/_rels/chart8.xml.rels':
-                    z.writestr(name, chart8_rels_bytes)
-                elif name == 'ppt/charts/_rels/chart9.xml.rels':
-                    z.writestr(name, chart9_rels_bytes)
+                elif name == 'ppt/charts/chart10.xml':
+                    z.writestr(name, chart10_bytes)
+                elif name == 'ppt/charts/chart11.xml':
+                    z.writestr(name, chart11_bytes)
+                elif name == 'ppt/charts/_rels/chart10.xml.rels':
+                    z.writestr(name, chart10_rels_bytes)
+                elif name == 'ppt/charts/_rels/chart11.xml.rels':
+                    z.writestr(name, chart11_rels_bytes)
                 else:
                     z.writestr(name, tpl.read(name))
             if 'docProps/app.xml' not in tpl.namelist():
@@ -156,7 +156,7 @@ def run_make_data():
 
 def run_fillers():
     page_dir = Path(__file__).resolve().parent
-    chart_dirs = sorted([d for d in page_dir.iterdir() if d.is_dir() and re.match(r'^chart\\d+$', d.name)])
+    chart_dirs = sorted([d for d in page_dir.iterdir() if d.is_dir() and re.match(r'^chart\d+$', d.name)])
     for d in chart_dirs:
         fill = d / 'fill.py'
         if fill.exists():
