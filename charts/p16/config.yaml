@@ -1,0 +1,12 @@
+output:
+  replace_charts:
+  - chart23.xml
+  - chart22.xml
+  - chart21.xml
+  - chart17.xml
+  - chart18.xml
+  - chart19.xml
+  - chart20.xml
+  final_mode: updated
+fill_policy:
+  axis_day_base: 20300

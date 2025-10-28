@@ -1,0 +1,14 @@
+{
+  "chart": "chart3.xml",
+  "chart_type": "doughnutChart",
+  "labels": [],
+  "series": [
+    {
+      "name": null,
+      "values": [
+        4.0,
+        86.0
+      ]
+    }
+  ]
+}

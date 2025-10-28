@@ -1,0 +1,7 @@
+output:
+  replace_charts:
+  - chart111.xml
+  - chart112.xml
+  final_mode: updated
+fill_policy:
+  axis_day_base: 20300

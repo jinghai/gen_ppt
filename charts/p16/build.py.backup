@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+import zipfile,re
+from pathlib import Path
+SLIDE_NO=16
+BASE=Path(__file__).resolve().parents[2]
+TPL=BASE.parent/'图标需求'/'LRTBH.pptx'
+UNZ=BASE/'L-RTBH-ppt-unzip'
+OUT=BASE/'output'/f'p{SLIDE_NO}.pptx'
+APP_XML='''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>Microsoft Office PowerPoint</Application>
+</Properties>
+'''
+
+def filt_rels(x:str):
+    ss=re.findall(r'<Relationship[^>]*>',x);rid=None;keep=[]
+    for t in ss:
+        if 'Target="slides/slide' in t:
+            if f'Target="slides/slide{SLIDE_NO}.xml"' in t:
+                mm=re.search(r'Id="([^"]+)"',t);rid=mm.group(1) if mm else None
+                t=re.sub(r'Target="slides/slide[^\"]+','Target="slides/slide1.xml"',t)
+                keep.append(t)
+        else: keep.append(t)
+    y='<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'+'\n'.join(keep)+'\n</Relationships>'
+    return y,rid
+
+def filt_pres(x:str,rid:str):
+    m=re.search(r'<p:sldId[^>]*r:id="'+(rid or '')+r'"[^>]*/>',x);body=m.group(0) if m else ''
+    # 补充 sldMasterIdLst 以确保布局/母版可解析（保持原模板中的其余结构）
+    x=re.sub(r'<p:sldIdLst>.*?</p:sldIdLst>','<p:sldIdLst>'+body+'</p:sldIdLst>',x,flags=re.S|re.M)
+    if '<p:sldMasterIdLst>' not in x:
+        x=x.replace('</p:presentation>','<p:sldMasterIdLst><p:sldMasterId r:id="rId3"/></p:sldMasterIdLst></p:presentation>')
+    return x
+
+def filt_ct(x:str):
+    x=re.sub(r'\s*<Override[^>]*PartName="/ppt/slides/slide\d+\.xml"[^>]*/>\s*','',x)
+    return x.replace('</Types>','<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>')
+
+def charts_to_override(rel_xml:str):
+    names=re.findall(r'Target="\.\./charts/(chart\d+\.xml)"',rel_xml)
+    m={}
+    for nm in set(names):
+        p1=UNZ/'charts'/nm
+        p2=UNZ/'charts'/'_rels'/(nm+'.rels')
+        m[nm]=p1.read_bytes() if p1.exists() else None
+        m['rels:'+nm+'.rels']=p2.read_bytes() if p2.exists() else None
+    return m
+
+def build():
+    with zipfile.ZipFile(TPL,'r') as t:
+        pres_rels=t.read('ppt/_rels/presentation.xml.rels').decode()
+        pres=t.read('ppt/presentation.xml').decode()
+        ct=t.read('[Content_Types].xml').decode()
+        srels=t.read(f'ppt/slides/_rels/slide{SLIDE_NO}.xml.rels').decode()
+        rels2,rid=filt_rels(pres_rels)
+        pres2=filt_pres(pres,rid)
+        ct2=filt_ct(ct)
+        ch=charts_to_override(srels)
+        with zipfile.ZipFile(OUT,'w',zipfile.ZIP_DEFLATED) as z:
+            for n in t.namelist():
+                if n.startswith('ppt/slides/slide'):
+                    if n==f'ppt/slides/slide{SLIDE_NO}.xml': z.writestr('ppt/slides/slide1.xml',t.read(n))
+                elif n.startswith('ppt/slides/_rels/slide'):
+                    if n==f'ppt/slides/_rels/slide{SLIDE_NO}.xml.rels': z.writestr('ppt/slides/_rels/slide1.xml.rels',t.read(n))
+                elif n=='ppt/_rels/presentation.xml.rels': z.writestr(n,rels2)
+                elif n=='ppt/presentation.xml': z.writestr(n,pres2)
+                elif n=='[Content_Types].xml': z.writestr(n,ct2)
+                elif n.startswith('ppt/charts/chart'):
+                    nm=n.split('/')[-1]; b=ch.get(nm)
+                    z.writestr(n, b if b is not None else t.read(n))
+                elif n.startswith('ppt/charts/_rels/chart'):
+                    nm=n.split('/')[-1].replace('.rels',''); b=ch.get('rels:'+nm+'.rels')
+                    z.writestr(n, b if b is not None else t.read(n))
+                else:
+                    z.writestr(n,t.read(n))
+            if 'docProps/app.xml' not in t.namelist():
+                z.writestr('docProps/app.xml', APP_XML)
+    print('Built',OUT)
+
+if __name__=='__main__':
+    build()

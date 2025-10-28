@@ -1,0 +1,17 @@
+{
+  "labels": [
+    "Positive",
+    "Neutral",
+    "Negative"
+  ],
+  "series": [
+    {
+      "name": null,
+      "values": [
+        37.5,
+        46.6,
+        15.9
+      ]
+    }
+  ]
+}

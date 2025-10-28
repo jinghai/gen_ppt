@@ -1,0 +1,33 @@
+output:
+  replace_charts:
+  - chart93.xml
+  - chart95.xml
+  - chart94.xml
+  - chart97.xml
+  - chart96.xml
+  - chart99.xml
+  - chart98.xml
+  - chart101.xml
+  - chart100.xml
+  - chart102.xml
+  - chart104.xml
+  - chart103.xml
+  - chart84.xml
+  - chart106.xml
+  - chart83.xml
+  - chart105.xml
+  - chart86.xml
+  - chart108.xml
+  - chart85.xml
+  - chart107.xml
+  - chart88.xml
+  - chart110.xml
+  - chart87.xml
+  - chart109.xml
+  - chart90.xml
+  - chart89.xml
+  - chart92.xml
+  - chart91.xml
+  final_mode: updated
+fill_policy:
+  axis_day_base: 20300

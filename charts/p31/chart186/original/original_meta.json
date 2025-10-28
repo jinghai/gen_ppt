@@ -1,0 +1,16 @@
+{
+  "chart": "chart186.xml",
+  "chart_type": "lineChart",
+  "labels": [],
+  "series": [
+    {
+      "name": null,
+      "values": [
+        13.0,
+        10.0,
+        13.0,
+        13.0
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+# p10 专属配置：仅用于 slide10 的最终合成替换范围
+output:
+  replace_charts: ["chart8.xml","chart9.xml"]
+  final_mode: updated
+
+# p10 填充特性：仅对 slide10 的散点/类别应用
+fill_policy:
+  axis_day_base: 20300
+
+# chart9 特性配置
+chart9:
+  # 是否对“每日占比”应用滑窗平滑（滚动求和后再计算占比）
+  smooth_percent: false
+  # 滑窗的天数，仅在 smooth_percent=true 时生效
+  smooth_window: 7

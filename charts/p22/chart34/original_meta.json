@@ -1,0 +1,19 @@
+{
+  "chart": "chart34.xml",
+  "chart_type": "barChart",
+  "labels": [],
+  "series": [
+    {
+      "name": null,
+      "values": [
+        56.00000000000001,
+        31.0,
+        80.0,
+        73.0,
+        50.0,
+        31.0,
+        25.0
+      ]
+    }
+  ]
+}

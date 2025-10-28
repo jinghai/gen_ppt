@@ -1,0 +1,10 @@
+output:
+  replace_charts:
+  - chart34.xml
+  - chart35.xml
+  - chart36.xml
+  - chart37.xml
+  - chart38.xml
+  final_mode: updated
+fill_policy:
+  axis_day_base: 20300

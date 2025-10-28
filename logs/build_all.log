@@ -1,0 +1,14 @@
+2025-10-28 20:31:17,121 INFO: Starting build_all with mode=both pages=None
+2025-10-28 20:31:17,141 INFO: Template PPT: /Users/jinghai/coder/neticle-data-sync_v1/gen_ppt/input/LRTBH.pptx
+2025-10-28 20:31:17,141 INFO: UNZIPPED root: /Users/jinghai/coder/neticle-data-sync_v1/gen_ppt/input/LRTBH-unzip
+2025-10-28 20:31:17,141 INFO: Out path: /Users/jinghai/coder/neticle-data-sync_v1/gen_ppt/output/LRTBH-final.pptx, mode: updated, charts to replace: 220
+2025-10-28 20:31:17,141 INFO: Running per-page builders...
+2025-10-28 20:31:32,398 INFO: Final validation summary: total=220 changed=220 unchanged=0
+2025-10-28 20:31:32,792 INFO: Generated original copy via build_all_original: /Users/jinghai/coder/neticle-data-sync_v1/gen_ppt/output/LRTBH-final-original.pptx
+2025-10-28 21:16:16,153 INFO: Starting build_all with mode=both pages=None
+2025-10-28 21:16:16,182 INFO: Template PPT: /Users/jinghai/coder/neticle-data-sync_v1/gen_ppt/input/LRTBH.pptx
+2025-10-28 21:16:16,182 INFO: UNZIPPED root: /Users/jinghai/coder/neticle-data-sync_v1/gen_ppt/input/LRTBH-unzip
+2025-10-28 21:16:16,182 INFO: Out path: /Users/jinghai/coder/neticle-data-sync_v1/gen_ppt/output/LRTBH-final.pptx, mode: updated, charts to replace: 220
+2025-10-28 21:16:16,182 INFO: Running per-page builders...
+2025-10-28 21:16:46,005 INFO: Final validation summary: total=220 changed=220 unchanged=0
+2025-10-28 21:16:46,799 INFO: Generated original copy via build_all_original: /Users/jinghai/coder/neticle-data-sync_v1/gen_ppt/output/LRTBH-final-original.pptx
