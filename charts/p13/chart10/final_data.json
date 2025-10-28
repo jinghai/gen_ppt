@@ -1,9 +1,25 @@
 {
-  "labels": [],
+  "labels": [
+    "Lenovo",
+    "Dell",
+    "Hp",
+    "Asus",
+    "Acer",
+    "Apple",
+    "Samsung"
+  ],
   "series": [
     {
       "name": null,
-      "values": []
+      "values": [
+        8.4,
+        2.3,
+        1.5,
+        2.2,
+        1.5,
+        61.4,
+        22.8
+      ]
     }
   ]
 }

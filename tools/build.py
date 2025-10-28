@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import zipfile
-import warnings
 import shutil
 from pathlib import Path
 import yaml
@@ -9,6 +8,7 @@ import sys
 import argparse
 import re
 import logging
+import warnings
 from typing import List, Optional, Dict, Any
 
 # 找到 gen_ppt 根目录（需同时包含 config.yaml 与 input 目录）
@@ -37,7 +37,6 @@ DEFAULT_TEMPLATE_PPT = _resolve(_proj.get('original_ppt', 'input/LRTBH.pptx'))
 UNZIPPED = _resolve(_proj.get('template_root', 'input/LRTBH-unzip'))
 _out_root = _proj.get('output_root', 'output')
 OUT_DEFAULT = _resolve(_out_root) / 'LRTBH-final.pptx'
-ORIG_OUT_DEFAULT = _resolve(_out_root) / 'LRTBH-final-original.pptx'
 
 # REPLACE_MAP 由配置驱动
 
@@ -102,8 +101,7 @@ def compose_final(template: Path, out_path: Path, mode: str, charts: list):
     with zipfile.ZipFile(template, 'r') as zin, zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED) as zout:
         names = set(zin.namelist())
         # 需要覆盖的 rels 名称集合，避免重复写入导致 zipfile UserWarning: Duplicate name
-        charts_set = set(charts or [])
-        rels_to_override = set(f'ppt/charts/_rels/{chart_name}.rels' for chart_name in charts_set)
+        rels_to_override = set(f'ppt/charts/_rels/{chart_name}.rels' for chart_name in (charts or []))
         for name in zin.namelist():
             # 跳过将被覆盖的 charts rels，避免重复写入
             if name in rels_to_override:
@@ -418,6 +416,12 @@ def compose_without_template(out_path: Path):
                 z.writestr(f'ppt/media/{img}', ip.read_bytes())
 
     print('Composed without template:', out_path)
+    # 也写入日志，便于与终端输出一致
+    try:
+        logger = _get_logger(None)
+        logger.info('Composed without template: %s', out_path)
+    except Exception:
+        pass
 
 
 def discover_page_builders() -> List[Path]:
@@ -427,8 +431,10 @@ def discover_page_builders() -> List[Path]:
         if not pages_root.exists():
             continue
         for p in pages_root.iterdir():
-            # 发现每页的 build.py（不再使用逐级 build_all.py）
-            if p.is_dir() and p.name.startswith('p') and (p / 'build.py').exists():
+            if not (p.is_dir() and p.name.startswith('p')):
+                continue
+            # 仅使用每页的 build.py 作为入口（不再调用 build_all.py）
+            if (p / 'build.py').exists():
                 candidates.append(p / 'build.py')
     # dedupe and sort by page name
     uniq = {}
@@ -437,15 +443,104 @@ def discover_page_builders() -> List[Path]:
     return [uniq[k] for k in sorted(uniq.keys())]
 
 
-def run_page_builders(pages: Optional[List[str]]):
+def run_page_builders(pages: Optional[List[str]], logger: Optional[logging.Logger] = None, fail_fast: bool = False) -> dict:
+    import time, shlex
+    logger = logger or _get_logger(None)
+    # 尝试获取文件日志路径，以便将子进程 stdout/stderr 全量写入文件日志
+    log_file_path: Optional[Path] = None
+    for h in logger.handlers:
+        base = getattr(h, 'baseFilename', None)
+        if base:
+            try:
+                log_file_path = Path(str(base))
+                break
+            except Exception:
+                pass
     builders = discover_page_builders()
     if pages:
         name_set = set(pages)
         builders = [b for b in builders if b.parent.name in name_set]
+    logger.info('Discovered %d page builders: %s', len(builders), ', '.join(b.parent.name for b in builders))
+    executed = 0
+    succeeded = 0
+    failed = 0
     for b in builders:
-        print('Running page builder:', b)
-        # pages 的 build.py 内部自行编排 make_data 与 chartX/fill.py，无需传入 mode
-        subprocess.run([sys.executable, str(b)], check=True)
+        executed += 1
+        # 始终执行每页的 build.py（不传 mode）
+        cmd = [sys.executable, str(b)]
+        cmd_str = ' '.join(shlex.quote(x) for x in cmd)
+        logger.info('Running page builder for %s: %s', b.parent.name, cmd_str)
+        t0 = time.time()
+        try:
+            res = subprocess.run(cmd, cwd=str(b.parent), check=True, capture_output=True, text=True)
+            dt = time.time() - t0
+            succeeded += 1
+            # 记录输出摘要（避免日志过大，仅输出前/后若干行）
+            out = (res.stdout or '').strip()
+            err = (res.stderr or '').strip()
+            if out:
+                snippet = out if len(out) <= 800 else (out[:400] + '\n...\n' + out[-400:])
+                logger.info('[%s] stdout (%d bytes)\n%s', b.parent.name, len(out), snippet)
+                # 追加全量 stdout 到文件日志
+                if log_file_path and out:
+                    try:
+                        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+                        with log_file_path.open('a', encoding='utf-8') as f:
+                            f.write(f"\n----- BEGIN [{b.parent.name}] stdout ({len(out)} bytes) -----\n")
+                            f.write(out + ("\n" if not out.endswith('\n') else ''))
+                            f.write(f"----- END [{b.parent.name}] stdout -----\n")
+                    except Exception:
+                        pass
+            if err:
+                snippet = err if len(err) <= 800 else (err[:400] + '\n...\n' + err[-400:])
+                logger.warning('[%s] stderr (%d bytes)\n%s', b.parent.name, len(err), snippet)
+                # 追加全量 stderr 到文件日志
+                if log_file_path and err:
+                    try:
+                        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+                        with log_file_path.open('a', encoding='utf-8') as f:
+                            f.write(f"\n----- BEGIN [{b.parent.name}] stderr ({len(err)} bytes) -----\n")
+                            f.write(err + ("\n" if not err.endswith('\n') else ''))
+                            f.write(f"----- END [{b.parent.name}] stderr -----\n")
+                    except Exception:
+                        pass
+            logger.info('Page builder OK for %s in %.2fs', b.parent.name, dt)
+        except subprocess.CalledProcessError as e:
+            dt = time.time() - t0
+            failed += 1
+            out = (e.stdout or '').strip()
+            err = (e.stderr or '').strip()
+            if out:
+                snippet = out if len(out) <= 800 else (out[:400] + '\n...\n' + out[-400:])
+                logger.error('[%s] stdout on failure (%d bytes)\n%s', b.parent.name, len(out), snippet)
+                if log_file_path and out:
+                    try:
+                        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+                        with log_file_path.open('a', encoding='utf-8') as f:
+                            f.write(f"\n----- BEGIN [{b.parent.name}] stdout on failure ({len(out)} bytes) -----\n")
+                            f.write(out + ("\n" if not out.endswith('\n') else ''))
+                            f.write(f"----- END [{b.parent.name}] stdout on failure -----\n")
+                    except Exception:
+                        pass
+            if err:
+                snippet = err if len(err) <= 800 else (err[:400] + '\n...\n' + err[-400:])
+                logger.error('[%s] stderr on failure (%d bytes)\n%s', b.parent.name, len(err), snippet)
+                if log_file_path and err:
+                    try:
+                        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+                        with log_file_path.open('a', encoding='utf-8') as f:
+                            f.write(f"\n----- BEGIN [{b.parent.name}] stderr on failure ({len(err)} bytes) -----\n")
+                            f.write(err + ("\n" if not err.endswith('\n') else ''))
+                            f.write(f"----- END [{b.parent.name}] stderr on failure -----\n")
+                    except Exception:
+                        pass
+            logger.error('Page builder FAILED for %s in %.2fs (rc=%s): %s', b.parent.name, dt, e.returncode, e)
+            # 失败即停
+            if fail_fast:
+                raise
+            # 否则继续执行后续页面，最终仍会汇总失败数量
+            continue
+    return {'executed': executed, 'succeeded': succeeded, 'failed': failed}
 
 def load_original_ppt() -> Path:
     if CONFIG.exists():
@@ -495,11 +590,11 @@ def ensure_unzipped(template: Path, dest_root: Path, required_charts: list):
     print('Unzipped selected ppt/* from', template, 'to', dest_root)
 
 
-# 不再在此处逐级调用 build_all_original.py；如需原稿对比，请在专门流程中处理。
+# 已移除原始版组合触发，避免生成 per-page original 工件
 
 
 def _get_logger(log_file: Optional[Path] = None, level: int = logging.INFO) -> logging.Logger:
-    logger = logging.getLogger('build_all')
+    logger = logging.getLogger('build')
     if logger.handlers:
         return logger
     logger.setLevel(level)
@@ -508,6 +603,7 @@ def _get_logger(log_file: Optional[Path] = None, level: int = logging.INFO) -> l
     ch.setLevel(level)
     ch.setFormatter(fmt)
     logger.addHandler(ch)
+    handlers_to_attach = [ch]
     if log_file is not None:
         try:
             log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -517,32 +613,37 @@ def _get_logger(log_file: Optional[Path] = None, level: int = logging.INFO) -> l
         fh.setLevel(level)
         fh.setFormatter(fmt)
         logger.addHandler(fh)
-    # 将 Python warnings 重定向到日志（文件与控制台）
-    warnings.simplefilter('default')
-    logging.captureWarnings(True)
-    wlog = logging.getLogger('py.warnings')
-    wlog.setLevel(level)
-    # 将相同的 handler 也挂到 warnings 日志上，确保文件与控制台都能看到
-    wlog.addHandler(ch)
-    if log_file is not None:
-        wlog.addHandler(fh)
+        handlers_to_attach.append(fh)
+    # 捕获 Python warnings 并将其写入日志（含文件与控制台），避免终端有而日志缺失
+    try:
+        logging.captureWarnings(True)
+        pyw = logging.getLogger('py.warnings')
+        pyw.setLevel(level)
+        pyw.propagate = False
+        # 仅在首次初始化时添加处理器，避免重复
+        if not pyw.handlers:
+            for h in handlers_to_attach:
+                pyw.addHandler(h)
+        # 确保默认显示用户级别警告
+        warnings.simplefilter('default')
+    except Exception:
+        pass
     return logger
 
 
 def main():
     ap = argparse.ArgumentParser(description='Compose final PPT；按需可运行逐页构建')
-    ap.add_argument('--mode', choices=['modified','original','both'], default='both', help='保留参数以兼容旧调用，当前不影响 per-page build.py')
     ap.add_argument('--pages', nargs='*', help='仅运行指定页面（如 p10 p12）；与 --build-pages 搭配使用或单独提供也会触发逐页构建')
     # 默认不跑逐页构建；仅在明确指定时才执行
     ap.add_argument('--build-pages', action='store_true', help='启用逐页构建（不加该参数则默认跳过逐页构建）')
-    ap.add_argument('--skip-compose', action='store_true', help='skip composing final PPT')
-    default_log = ROOT / 'logs' / 'build_all.log'
+    default_log = ROOT / 'logs' / 'build.log'
     ap.add_argument('--log-file', type=Path, default=default_log, help='日志输出文件路径')
     ap.add_argument('--log-level', default='INFO', choices=['DEBUG','INFO','WARNING','ERROR','CRITICAL'], help='日志级别')
+    ap.add_argument('--fail-fast', action='store_true', help='出现页面构建失败时立即停止')
     args = ap.parse_args()
 
     logger = _get_logger(args.log_file, getattr(logging, args.log_level.upper(), logging.INFO))
-    logger.info('Starting build_all with mode=%s pages=%s', args.mode, args.pages)
+    logger.info('Starting build_all with pages=%s', args.pages)
 
     # 加载配置的原始 PPT 路径与需要替换的图表列表，并确保解压可用
     out_path, mode, charts = load_out_path_and_mode()
@@ -556,25 +657,28 @@ def main():
     should_build_pages = bool(args.build_pages or (args.pages and len(args.pages) > 0))
     if should_build_pages:
         logger.info('Running per-page builders...')
-        run_page_builders(args.pages)
+        stats = run_page_builders(args.pages, logger=logger, fail_fast=args.fail_fast)
+        logger.info('Per-page builders summary: executed=%d succeeded=%d failed=%d', stats['executed'], stats['succeeded'], stats['failed'])
 
-    if not args.skip_compose:
-        if _is_readable_zip(template_ppt):
-            compose_final(template_ppt, out_path, mode, charts)
-            # 轻量一致性校验（仅针对被替换的图表）
-            if charts:
-                summary = _validate_replaced_charts(out_path, template_ppt, charts)
-                print('Final validation summary (changed vs unchanged):', {
-                    'total': summary.get('total'),
-                    'changed': summary.get('changed'),
-                    'unchanged': summary.get('unchanged'),
-                })
-                logger.info('Final validation summary: total=%s changed=%s unchanged=%s', summary.get('total'), summary.get('changed'), summary.get('unchanged'))
-        else:
-            print('[warn] original template not readable, composing from UNZIPPED fallback')
-            logger.warning('Original template not readable, composing from UNZIPPED fallback')
-            compose_without_template(out_path)
-    # 不再在此流程中生成原始拷贝（原始对比流程应在单独的工具中执行）
+    # 始终合成最终稿；当模板损坏/不可读时自动回退
+    if _is_readable_zip(template_ppt):
+        compose_final(template_ppt, out_path, mode, charts)
+        # 记录与终端一致的合成信息
+        logger.info('Composed %s mode=%s charts=%s', out_path, mode, charts)
+        # 轻量一致性校验（仅针对被替换的图表）
+        if charts:
+            summary = _validate_replaced_charts(out_path, template_ppt, charts)
+            print('Final validation summary (changed vs unchanged):', {
+                'total': summary.get('total'),
+                'changed': summary.get('changed'),
+                'unchanged': summary.get('unchanged'),
+            })
+            logger.info('Final validation summary: total=%s changed=%s unchanged=%s', summary.get('total'), summary.get('changed'), summary.get('unchanged'))
+    else:
+        print('[warn] original template not readable, composing from UNZIPPED fallback')
+        logger.warning('Original template not readable, composing from UNZIPPED fallback')
+        compose_without_template(out_path)
+    # 已移除原始版组合调用，保持构建流程聚焦在最终稿
 
 
 if __name__ == '__main__':

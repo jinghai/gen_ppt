@@ -12,10 +12,10 @@ def _resolve_tpl() -> Path:
         cfg = yaml.safe_load((BASE / 'config.yaml').read_text(encoding='utf-8')) or {}
     except Exception:
         cfg = {}
-    op = (cfg.get('project') or {}).get('original_ppt', 'ppt/input/LRTBH.pptx')
+    op = (cfg.get('project') or {}).get('original_ppt', 'input/LRTBH.pptx')
     p = Path(op)
     if not p.is_absolute():
-        p = BASE.parent.parent / op
+        p = BASE / op
     return p
 
 TPL = _resolve_tpl()
@@ -25,10 +25,10 @@ def _resolve_unz_root() -> Path:
         cfg = yaml.safe_load((BASE / 'config.yaml').read_text(encoding='utf-8')) or {}
     except Exception:
         cfg = {}
-    tr = (cfg.get('project') or {}).get('template_root', 'ppt/input/LRTBH-unzip')
+    tr = (cfg.get('project') or {}).get('template_root', 'input/LRTBH-unzip')
     p = Path(tr)
     if not p.is_absolute():
-        p = BASE.parent.parent / tr
+        p = BASE / tr
     return p
 
 UNZ = _resolve_unz_root()
@@ -204,5 +204,29 @@ def build():
     print(f'Built {OUT}')
 
 
+import subprocess, sys, re
+
+def run_make_data():
+    page_dir = Path(__file__).resolve().parent
+    script = page_dir / 'make_data.py'
+    if script.exists():
+        print(f'[p{SLIDE_NO}] run make_data.py')
+        subprocess.run([sys.executable, str(script)], check=True, cwd=str(page_dir))
+    else:
+        print(f'[p{SLIDE_NO}] skip make_data.py (not found)')
+
+def run_fillers():
+    page_dir = Path(__file__).resolve().parent
+    chart_dirs = sorted([d for d in page_dir.iterdir() if d.is_dir() and re.match(r'^chart\\d+$', d.name)])
+    for d in chart_dirs:
+        fill = d / 'fill.py'
+        if fill.exists():
+            print(f'[p{SLIDE_NO}] run {fill.name} in {d.name}')
+            subprocess.run([sys.executable, str(fill)], check=True, cwd=str(d))
+        else:
+            print(f'[p{SLIDE_NO}] skip {d.name}/fill.py (not found)')
+
 if __name__ == '__main__':
+    run_make_data()
+    run_fillers()
     build()

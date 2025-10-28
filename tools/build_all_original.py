@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 import yaml
 import logging
+import warnings
 from typing import Dict, Any, List, Optional
 from lxml import etree as ET
 import sys
@@ -67,6 +68,14 @@ def _get_logger(log_file: Optional[Path] = None, level: int = logging.INFO) -> l
         fh.setLevel(level)
         fh.setFormatter(fmt)
         logger.addHandler(fh)
+    # 将 Python warnings 重定向到日志（文件与控制台）
+    warnings.simplefilter('default')
+    logging.captureWarnings(True)
+    wlog = logging.getLogger('py.warnings')
+    wlog.setLevel(level)
+    wlog.addHandler(ch)
+    if log_file is not None:
+        wlog.addHandler(fh)
     return logger
 
 
@@ -391,18 +400,23 @@ def build_and_validate(out_path: Path, strict: bool = False, logger: Optional[lo
 
 if __name__ == '__main__':
     import argparse
-    ap = argparse.ArgumentParser(description='使用 original_* 重建原始版 PPT，并校验与模板一致性')
+    ap = argparse.ArgumentParser(description='使用 original_* 重建原始版 PPT，并校验与模板一致性；按需可运行逐页构建')
     ap.add_argument('--out', type=Path, default=OUT_PATH, help='输出 PPTX 路径')
-    ap.add_argument('--strict', action='store_true', help='若存在不一致则退出码为 2')
-    ap.add_argument('--pages', nargs='*', default=None, help='仅针对指定页面先运行其 build_original.py（如 p10 p12）；默认全部 p*')
-    ap.add_argument('--skip-pages', action='store_true', help='跳过逐页 build_original.py 执行')
+    # 默认开启严格模式，发现不一致时退出码为 2；可用 --no-strict 关闭
+    ap.add_argument('--strict', dest='strict', action='store_true', default=True, help='若存在不一致则退出码为 2（默认开启）')
+    ap.add_argument('--no-strict', dest='strict', action='store_false', help='关闭严格模式（存在不一致时不改变退出码）')
+    ap.add_argument('--pages', nargs='*', default=None, help='仅运行指定页面（如 p10 p12）；与 --build-pages 搭配使用或单独提供也会触发逐页构建')
+    # 默认不跑逐页构建；仅在明确指定时才执行
+    ap.add_argument('--build-pages', action='store_true', help='启用逐页 build_original.py 执行（默认跳过）')
     default_log = ROOT / 'logs' / 'build_all_original.log'
     ap.add_argument('--log-file', type=Path, default=default_log, help='日志输出文件路径')
     ap.add_argument('--log-level', default='INFO', choices=['DEBUG','INFO','WARNING','ERROR','CRITICAL'], help='日志级别')
     args = ap.parse_args()
     logger = _get_logger(args.log_file, getattr(logging, args.log_level.upper(), logging.INFO))
     logger.info('Starting build_all_original with logging to %s', args.log_file)
-    if not args.skip_pages:
+    # 触发逐页构建的条件：显式 --build-pages 或提供了 --pages（表示希望跑指定页面）
+    should_build_pages = bool(args.build_pages or (args.pages and len(args.pages) > 0))
+    if should_build_pages:
         stats = run_page_build_originals(args.pages, logger=logger)
         logger.info('Per-page build_original summary: total=%d executed=%d succeeded=%d failed=%d',
                     stats['total'], stats['executed'], stats['succeeded'], stats['failed'])

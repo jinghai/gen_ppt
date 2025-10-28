@@ -161,6 +161,30 @@ def build():
 
     print('Built', OUT_PPTX)
 
+import subprocess, sys, re
+
+def run_make_data():
+    page_dir = Path(__file__).resolve().parent
+    script = page_dir / 'make_data.py'
+    if script.exists():
+        print(f'[p{SLIDE_NO}] run make_data.py')
+        subprocess.run([sys.executable, str(script)], check=True, cwd=str(page_dir))
+    else:
+        print(f'[p{SLIDE_NO}] skip make_data.py (not found)')
+
+def run_fillers():
+    page_dir = Path(__file__).resolve().parent
+    chart_dirs = sorted([d for d in page_dir.iterdir() if d.is_dir() and re.match(r'^chart\\d+$', d.name)])
+    for d in chart_dirs:
+        fill = d / 'fill.py'
+        if fill.exists():
+            print(f'[p{SLIDE_NO}] run {fill.name} in {d.name}')
+            subprocess.run([sys.executable, str(fill)], check=True, cwd=str(d))
+        else:
+            print(f'[p{SLIDE_NO}] skip {d.name}/fill.py (not found)')
+
 
 if __name__ == '__main__':
+    run_make_data()
+    run_fillers()
     build()

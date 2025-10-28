@@ -359,8 +359,18 @@ def main() -> int:
         # 遍历当前页所有 chart*
         import re as _re
         for chart_dir in sorted([p for p in page_dir.iterdir() if p.is_dir() and _re.match(r'^chart\d+$', p.name)]):
-            chart_name = chart_dir.name.replace('chart','') + '.xml'
-            chart_xml = UNZIPPED_CHARTS / chart_name
+            chart_path_txt = chart_dir / 'chart_path.txt'
+            xml_name = None
+            if chart_path_txt.exists():
+                try:
+                    raw = chart_path_txt.read_text(encoding='utf-8').strip()
+                    from pathlib import Path as _P
+                    xml_name = _P(raw).name if raw else None
+                except Exception:
+                    xml_name = None
+            if not xml_name:
+                xml_name = f"{chart_dir.name}.xml"
+            chart_xml = UNZIPPED_CHARTS / xml_name
             if not chart_xml.exists():
                 print('缺少图表 XML：', chart_xml)
                 continue
