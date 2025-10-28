@@ -16,7 +16,7 @@
 ├── config.yaml             # 统一配置（模板根、输出根、时间范围、数据源等）
 ├── input/
 │   ├── LRTBH-unzip/        # 模板 PPT 解压目录（内部应含 ppt/charts 等）
-│   └── LRTBH.pptx          # 模板 PPT 原文件（可选，通常不入库）
+│   └── LRTBH.pptx          # 模板 PPT 原文件
 ├── logs/                   # 运行日志（建议不入库）
 ├── output/                 # 单页与最终合成 PPT 输出（建议不入库）
 ├── tools/                  # 通用工具脚本
@@ -55,6 +55,7 @@ pip install -r requirements.txt
 ## 快速上手
 1) 准备模板
 - 将模板原文件放置于 `input/LRTBH.pptx`（可选）。
+ - 将模板原文件放置于 `input/LRTBH.pptx`。
 - 解压模板到 `input/LRTBH-unzip/`（内部应包含 `ppt/charts` 等子目录）。
 
 2) 创建并激活虚拟环境、安装依赖
@@ -96,7 +97,7 @@ python tools/build_all.py -h
 - 输出预览：在 `output/` 目录下启动本地服务 `python3 -m http.server 8000`，浏览 `http://localhost:8000/` 查看生成文件。
 
 ## 版本管理建议
-- 强烈建议在 `.gitignore` 中排除：`output/`、`logs/`、`input/LRTBH-unzip/`、`input/LRTBH.pptx`、`.venv/`、`__pycache__/`、`*.pyc`、`.DS_Store`、`.pytest_cache/`、`.mypy_cache/`、`.idea/`、`.vscode/` 等。
+- 强烈建议在 `.gitignore` 中排除：`output/`、`logs/`、`.venv/`、`__pycache__/`、`*.pyc`、`.DS_Store`、`.pytest_cache/`、`.mypy_cache/`、`.idea/`、`.vscode/` 等。
 - `charts/**/` 中的中间产物按是否可重算进行选择性提交：`final_data.csv`（如为手工修订且构建必需）建议入库；`data.csv` 通常可不入库。
 
 ## 现状与一致性说明
