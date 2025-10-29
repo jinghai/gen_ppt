@@ -33,3 +33,7 @@ input/
 # --- 可选：按团队约定忽略的中间数据 ---
 # charts/**/data.csv
 # charts/**/chart_path.txt
+
+# --- 本地保留的说明文档（不入库） ---
+实现方案.md
+图表实现模式.md
