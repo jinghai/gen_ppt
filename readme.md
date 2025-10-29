@@ -14,9 +14,7 @@
 │   │   └── chart9/
 │   └── ...
 ├── config.yaml             # 统一配置（模板根、输出根、时间范围、数据源等）
-├── input/
-│   ├── LRTBH-unzip/        # 模板 PPT 解压目录（内部应含 ppt/charts 等）
-│   └── LRTBH.pptx          # 模板 PPT 原文件
+├── input/                  # 下载离线数据
 ├── logs/                   # 运行日志（建议不入库）
 ├── output/                 # 单页与最终合成 PPT 输出（建议不入库）
 ├── tools/                  # 通用工具脚本
