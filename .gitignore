@@ -28,6 +28,7 @@ pip-wheel-metadata/
 output/
 logs/
 tmp/
+input/
 
 # --- 可选：按团队约定忽略的中间数据 ---
 # charts/**/data.csv

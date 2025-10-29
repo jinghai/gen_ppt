@@ -4,7 +4,7 @@ import re
 import sys
 from pathlib import Path
 
-TOOLS = Path(__file__).resolve().parents[1] / 'tools'
+TOOLS = Path(__file__).resolve().parents[2] / 'tools'
 sys.path.append(str(TOOLS))
 from gen_preview_chart import generate_preview  # type: ignore
 

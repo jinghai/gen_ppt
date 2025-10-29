@@ -193,7 +193,7 @@ def make_trend_lenovo_vs_others(cfg: Config, conn: sqlite3.Connection) -> List[D
 # ---------- 按渠道的4周SOV（Lenovo占比） ----------
 
 def make_weekly_channel_sov_lenovo(cfg: Config, channel: str, country_id: Optional[int] = None) -> Tuple[List[str], List[float]]:
-    # 载入 neticle 原始库，基于 mentions_wide：countryId、sourceCode、keyword_label
+    # 载入 neticle 原始库，基于 mentions_wide：countryId、sourceName、keyword_label
     if not cfg.neticle_db.exists():
         return [], []
     # 解析国家过滤
@@ -202,9 +202,9 @@ def make_weekly_channel_sov_lenovo(cfg: Config, channel: str, country_id: Option
     except Exception:
         base_cfg = {}
     country_id = country_id or (base_cfg.get('filters') or {}).get('countryId')
-    # 渠道映射：取得该渠道对应的 sourceCode 列表
-    src_codes = [s.lower() for s in (cfg.channels.get(channel) or [])]
-    if not src_codes:
+    # 渠道映射：取得该渠道对应的 sourceName 列表
+    src_names = [s.lower() for s in (cfg.channels.get(channel) or [])]
+    if not src_names:
         return [], []
     # 计算 bins 映射与标签
     bin_map, labels = _weeks_bins_labels(cfg.start_date, cfg.end_date)
@@ -222,7 +222,7 @@ def make_weekly_channel_sov_lenovo(cfg: Config, channel: str, country_id: Option
     q = """
         SELECT date(datetime(createdAtUtcMs/1000,'unixepoch')) AS day,
                LOWER(keyword_label) AS brand_lower,
-               sourceCode
+               sourceName
         FROM mentions_wide
         WHERE createdAtUtcMs BETWEEN ? AND ?
     """
@@ -230,21 +230,22 @@ def make_weekly_channel_sov_lenovo(cfg: Config, channel: str, country_id: Option
     if country_id is not None:
         q += " AND countryId = ?"
         params.append(country_id)
-    # 限定渠道
-    # 为避免 SQLite 的 '?' 数量问题，如 src_codes 为空已提前 return
-    q += f" AND LOWER(sourceCode) IN ({','.join(['?'] * len(src_codes))})"
-    params.extend(src_codes)
-    # 限定品牌（通过 keyword_label 模糊为小写品牌名，简单口径）
-    # 这里假设 keyword_label 即品牌名标签，已在预计算中统一
+    # 限定渠道（按 sourceName 文本匹配）
+    # 为避免 SQLite 的 '?' 数量问题，如 src_names 为空已提前 return
+    q += f" AND LOWER(sourceName) IN ({','.join(['?'] * len(src_names))})"
+    params.extend(src_names)
+    # 品牌口径：部分库的 keyword_label 形如 "lenovo-fr-v5"，因此不在 SQL 端硬过滤，改为读出后在 Pandas 中归一化到基础品牌
     brand_set = [b.lower() for b in brands]
-    q += f" AND LOWER(keyword_label) IN ({','.join(['?'] * len(brand_set))})"
-    params.extend(brand_set)
 
     with _connect_sqlite(cfg.neticle_db) as conn:
         df = pd.read_sql_query(q, conn, params=params)
     if df.empty:
         return labels, [0.0, 0.0, 0.0, 0.0]
     df['day'] = df['day'].astype(str)
+    # 归一化品牌：将 keyword_label 小写后按 '-' 分割取首段（如 lenovo-fr-v5 -> lenovo）
+    df['brand_lower'] = df['brand_lower'].astype(str).str.split('-').str[0]
+    # 仅保留在品牌集合内的数据
+    df = df[df['brand_lower'].isin(brand_set)]
     # 过滤非映射到 bins 的日期（跨月边界兜底）
     df = df[df['day'].isin(bin_map.index)]
     if df.empty:
