@@ -6,6 +6,7 @@ P29页面构建脚本 - 联想法国市场媒体渠道声量份额分析
 import sys
 import atexit
 import subprocess
+import yaml
 from datetime import datetime
 from pathlib import Path
 
@@ -52,6 +53,13 @@ _init_file_logging()
 SLIDE_NO = 29
 PAGE_DIR = Path(__file__).resolve().parent
 
+def load_config():
+    """加载页面级配置文件"""
+    config_path = PAGE_DIR / 'config.yaml'
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    return config
+
 def run_generate_excel():
     """步骤1: 运行数据提取和Excel生成脚本"""
     script = PAGE_DIR / 'generate_excel.py'
@@ -84,6 +92,9 @@ def verify_outputs():
     """步骤3: 验证输出文件"""
     print(f'[P{SLIDE_NO}] 步骤3: 验证输出文件...')
     
+    # 加载配置获取输出路径
+    config = load_config()
+    
     # 检查Excel文件
     excel_file = PAGE_DIR / 'p29_data.xlsx'
     if excel_file.exists():
@@ -92,8 +103,8 @@ def verify_outputs():
     else:
         print(f'[P{SLIDE_NO}] ✗ Excel文件未找到: {excel_file}')
     
-    # 检查PPT文件（在output目录中）
-    ppt_file = PAGE_DIR / 'output' / 'p29-final.pptx'
+    # 检查PPT文件（使用配置中的路径）
+    ppt_file = PAGE_DIR / config['output']['final_ppt']
     if ppt_file.exists():
         size_mb = ppt_file.stat().st_size / (1024 * 1024)
         print(f'[P{SLIDE_NO}] ✓ PPT文件: {ppt_file.name} ({size_mb:.2f}MB)')

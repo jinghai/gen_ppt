@@ -1,6 +1,68 @@
+# P29页面配置 - 联想法国市场媒体渠道声量份额分析
+# 说明：本配置包含P29页面构建所需的所有配置项，独立于全局配置
+
+# 时间范围配置
+update:
+  start_date: "2025-08-01"               # 起始日期（UTC，YYYY-MM-DD）
+  end_date: "2025-08-31"                 # 截止日期（UTC，YYYY-MM-DD）
+
+# 数据源配置（相对于P29目录的路径）
+data_sources:
+  neticle_db: ../../input/neticle-v5-08.sqlite   # 舆情原始库（Neticle 数据）
+  metrics_db: ../../input/metrics_v5-08.db       # 指标聚合库（预计算指标）
+
+# 过滤器配置
+filters:
+  countryId: 39                           # 国家 ID（France）
+  country_name: "France"                  # 国家名称（用于展示/日志）
+  brand_key: "Lenovo"                     # 品牌英文键（与数据源一致）
+  brand_alias: ["Lenovo", "联想"]         # 品牌别名，用于模糊匹配/展示
+  brands: ["lenovo","dell","hp","asus","acer","apple","samsung"]  # 分析范围（忽略大小写，与 mentions_wide.keyword_label 部分匹配）
+  brands_display: ["Lenovo","Dell","HP","ASUS","Acer","Apple","Samsung"]  # 展示用名称顺序
+
+# 渠道映射：将 sources.name 归并为目标渠道
+channels:
+  Forum:
+    - forum
+    - forum_aggregator
+  Online News:
+    - article
+    - frontpage
+    - article_aggregator
+    - frontpage_aggregator
+    - comment
+    - comment_article
+  Blog:
+    - blog
+    - blog_aggregator
+    - comment_blog
+  X:
+    - twitter
+    - twitter_reply
+    - twitter_retweet
+    - twitter_quoted
+  Instagram:
+    - instagram
+    - instagram_post
+    - instagram_comment
+    - instagram_reply
+  YouTube:
+    - youtube
+    - video
+
+# 填充策略配置
+fill_policy:
+  keep_original_for_missing: true            # 缺失日期/类别使用原始图表缓存；有数据则覆盖
+  pre_aug: keep_template_cache            # 填充前策略：保留模板缓存，避免无关资源丢失
+  aug_update: replace_or_merge            # 填充更新策略：替换或合并，视图表类型而定
+  axis_day_base: 20300                    # 日期轴基准（Excel 日期序列起点偏移）
+  dedup: mention_id                       # 去重依据（唯一标识）
+  sentiment_labels: [Positive, Neutral, Negative]  # 情感标签顺序（统一口径）
+  channel_order: ["Online News", "Forum", "Blog", "X", "Instagram", "YouTube"]  # 渠道排序（输出一致性）
+
+# 输出配置
 output:
   replace_charts:
-  - chart115.xml
+    - chart115.xml
   final_mode: updated
-fill_policy:
-  axis_day_base: 20300
+  final_ppt: ./output/p29-final.pptx     # P29页面最终PPT输出路径

@@ -17,19 +17,18 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 
 # 项目路径配置
 ROOT = Path(__file__).resolve().parent
-GEN = Path(__file__).resolve().parents[2]
 
 def load_config():
-    """加载配置文件"""
-    config_path = GEN / 'config.yaml'
+    """加载页面级配置文件"""
+    config_path = ROOT / 'config.yaml'
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     return config
 
 def get_database_paths(config):
-    """获取数据库路径"""
-    neticle_db = GEN / config['data_sources']['neticle_db']
-    metrics_db = GEN / config['data_sources']['metrics_db']
+    """获取数据库路径（相对于P29目录）"""
+    neticle_db = ROOT / config['data_sources']['neticle_db']
+    metrics_db = ROOT / config['data_sources']['metrics_db']
     return neticle_db, metrics_db
 
 def to_utc_ms(date_str):

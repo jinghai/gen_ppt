@@ -17,11 +17,10 @@ import openpyxl
 
 # 项目路径配置
 ROOT = Path(__file__).resolve().parent
-GEN = Path(__file__).resolve().parents[2]
 
 def load_config():
-    """加载配置文件"""
-    config_path = GEN / 'config.yaml'
+    """加载页面级配置文件"""
+    config_path = ROOT / 'config.yaml'
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     return config
