@@ -1,136 +1,103 @@
-#!/usr/bin/env python3
+"""
+构建原始 PPT（仅本页），基于页面微模板。
+
+策略与约束（MVP，避免过度设计）：
+- 只使用页面 `template/` 目录下的微模板，不做 UNZ 回退或跨页面依赖。
+- 严格校验 `ppt/embeddings` 中的嵌入数据类型，仅允许 `.xlsb`。
+- 需要存在关键文件：`slide1.xml`、`presentation.xml(.rels)`、`[Content_Types].xml`、`ppt/charts/_rels/`。
+- 输出日志到当前页面 `logs/build_original.log`，并在控制台同步打印。
+- 直接将微模板目录打包为 `pXX-original.pptx`（XX 为页码），不进行冗余的 XML 过滤（微模板已是单页）。
+
+该实现兼顾可读性与稳健性，满足当前需求并便于后续扩展。
+"""
+
+from __future__ import annotations
+
 import zipfile
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
-from lxml import etree as ET
-import yaml
 
-SLIDE_NO = 27
-BASE = Path(__file__).resolve().parents[2]
-def _resolve_tpl() -> Path:
+
+def _page_dir() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _slide_no_from_dir(page_dir: Path) -> int:
+    name = page_dir.name
+    if not name.startswith('p'):
+        raise ValueError(f'Invalid page dir name: {name}')
+    return int(name[1:])
+
+
+PAGE_DIR = _page_dir()
+SLIDE_NO = _slide_no_from_dir(PAGE_DIR)
+TEMPLATE_DIR = PAGE_DIR / 'template'
+EMBED_DIR = TEMPLATE_DIR / 'ppt' / 'embeddings'
+SLIDES_DIR = TEMPLATE_DIR / 'ppt' / 'slides'
+PRES_DIR = TEMPLATE_DIR / 'ppt'
+CHARTS_DIR = TEMPLATE_DIR / 'ppt' / 'charts'
+CHARTS_RELS_DIR = CHARTS_DIR / '_rels'
+
+OUT_PPTX = PAGE_DIR / 'output' / f'p{SLIDE_NO}-original.pptx'
+LOG_DIR = PAGE_DIR / 'logs'
+LOG_FILE = LOG_DIR / 'build_original.log'
+
+
+def log(msg: str) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    line = f'[{ts}] [p{SLIDE_NO}] {msg}'
+    print(line)
+    with LOG_FILE.open('a', encoding='utf-8') as f:
+        f.write(line + '\n')
+
+
+def assert_micro_template_integrity() -> None:
+    """校验微模板的关键结构与约束。"""
+    if not TEMPLATE_DIR.exists():
+        raise FileNotFoundError(f'Micro template missing: {TEMPLATE_DIR}')
+
+    required_files = [
+        SLIDES_DIR / 'slide1.xml',
+        PRES_DIR / 'presentation.xml',
+        PRES_DIR / '_rels' / 'presentation.xml.rels',
+        TEMPLATE_DIR / '[Content_Types].xml',
+    ]
+    for p in required_files:
+        if not p.exists():
+            raise FileNotFoundError(f'Required file missing: {p}')
+
+    if not EMBED_DIR.exists():
+        raise FileNotFoundError(f'Embeddings directory missing: {EMBED_DIR}')
+    bad = [p for p in EMBED_DIR.iterdir() if p.is_file() and p.suffix.lower() != '.xlsb']
+    if bad:
+        raise ValueError(f'Only .xlsb allowed in embeddings, found: {", ".join(b.name for b in bad)}')
+
+    if not CHARTS_RELS_DIR.exists():
+        raise FileNotFoundError(f'Charts rels directory missing: {CHARTS_RELS_DIR}')
+
+
+def build() -> None:
+    """将微模板完整打包为原始 PPTX（单页）。"""
+    log('Start build_original')
+    assert_micro_template_integrity()
+    OUT_PPTX.parent.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(OUT_PPTX, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+        for p in sorted(TEMPLATE_DIR.rglob('*')):
+            if p.is_file():
+                arc = p.relative_to(TEMPLATE_DIR)
+                z.write(p, arcname=str(arc))
+    log(f'Wrote {OUT_PPTX}')
+
+
+def main() -> None:
     try:
-        cfg = yaml.safe_load((BASE / 'config.yaml').read_text(encoding='utf-8')) or {}
-    except Exception:
-        cfg = {}
-    op = (cfg.get('project') or {}).get('original_ppt', 'input/LRTBH.pptx')
-    p = Path(op)
-    if not p.is_absolute():
-        p = BASE / op
-    return p
-def _resolve_out() -> Path:
-    try:
-        cfg = yaml.safe_load((BASE / 'config.yaml').read_text(encoding='utf-8')) or {}
-    except Exception:
-        cfg = {}
-    root = (cfg.get('project') or {}).get('output_root', 'output')
-    p = Path(root)
-    if not p.is_absolute():
-        p = BASE / root
-    return p / f'p{SLIDE_NO}-original.pptx'
-TPL = _resolve_tpl()
-OUT = _resolve_out()
-
-APP_XML = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
-<Application>Microsoft Office PowerPoint</Application>
-<PresentationFormat>Widescreen</PresentationFormat>
-<TotalTime>0</TotalTime>
-<Words>0</Words>
-<Slides>1</Slides>
-<Notes>0</Notes>
-<HiddenSlides>0</HiddenSlides>
-<MMClips>0</MMClips>
-<ScaleCrop>false</ScaleCrop>
-<LinksUpToDate>false</LinksUpToDate>
-<SharedDoc>false</SharedDoc>
-<HyperlinksChanged>false</HyperlinksChanged>
-<AppVersion>16.0000</AppVersion>
-</Properties>'''
-
-NS = {
-    'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
-    'p': 'http://schemas.openxmlformats.org/presentationml/2006/main',
-}
-
-
-def filter_pres_rels(rels_bytes: bytes) -> tuple[bytes, Optional[str]]:
-    pkg_ns = 'http://schemas.openxmlformats.org/package/2006/relationships'
-    root = ET.fromstring(rels_bytes)
-    new_root = ET.Element('Relationships', xmlns=pkg_ns)
-    slide_rel_id: Optional[str] = None
-    for rel in root.findall('{%s}Relationship' % pkg_ns):
-        t = rel.get('Target') or ''
-        typ = rel.get('Type') or ''
-        if typ.endswith('/slide') and t == f'slides/slide{SLIDE_NO}.xml':
-            slide_rel_id = rel.get('Id')
-            e = ET.SubElement(new_root, 'Relationship')
-            for k, v in rel.attrib.items():
-                e.set(k, v)
-            e.set('Target', 'slides/slide1.xml')
-        elif not typ.endswith('/slide'):
-            e = ET.SubElement(new_root, 'Relationship')
-            for k, v in rel.attrib.items():
-                e.set(k, v)
-    return ET.tostring(new_root, xml_declaration=True, encoding='UTF-8', standalone="yes"), slide_rel_id
-
-
-def filter_pres_xml(pres_bytes: bytes, slide_rel_id: Optional[str]) -> bytes:
-    tree = ET.fromstring(pres_bytes)
-    sldIdLst = tree.find('{%s}sldIdLst' % NS['p'])
-    if sldIdLst is None:
-        sldIdLst = ET.SubElement(tree, '{%s}sldIdLst' % NS['p'])
-    for ch in list(sldIdLst):
-        sldIdLst.remove(ch)
-    ET.SubElement(sldIdLst, '{%s}sldId' % NS['p'], attrib={'id': '256', '{%s}id' % NS['r']: slide_rel_id or 'rId1'})
-    return ET.tostring(tree, xml_declaration=True, encoding='UTF-8', standalone="yes")
-
-
-def filter_content_types(ct_bytes: bytes) -> bytes:
-    ct = ET.fromstring(ct_bytes)
-    ns_ct = 'http://schemas.openxmlformats.org/package/2006/content-types'
-    for o in list(ct.findall('{%s}Override' % ns_ct)):
-        part = o.get('PartName') or ''
-        if part.startswith('/ppt/slides/slide'):
-            ct.remove(o)
-    has_app = any(o.get('PartName') == '/docProps/app.xml' for o in ct.findall('{%s}Override' % ns_ct))
-    if not has_app:
-        ET.SubElement(ct, '{%s}Override' % ns_ct, PartName='/docProps/app.xml', ContentType='application/vnd.openxmlformats-officedocument.extended-properties+xml')
-    ET.SubElement(ct, '{%s}Override' % ns_ct, PartName='/ppt/slides/slide1.xml', ContentType='application/vnd.openxmlformats-officedocument.presentationml.slide+xml')
-    return ET.tostring(ct, xml_declaration=True, encoding='UTF-8', standalone="yes")
-
-
-def build():
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(TPL, 'r') as tpl:
-        pres_rels_bytes = tpl.read('ppt/_rels/presentation.xml.rels')
-        pres_xml_bytes = tpl.read('ppt/presentation.xml')
-        ct_bytes = tpl.read('[Content_Types].xml')
-    new_pres_rels_xml, slide_rel_id = filter_pres_rels(pres_rels_bytes)
-    new_pres_xml = filter_pres_xml(pres_xml_bytes, slide_rel_id)
-    new_ct_xml = filter_content_types(ct_bytes)
-    with zipfile.ZipFile(TPL, 'r') as tpl:
-        with zipfile.ZipFile(OUT, 'w', compression=zipfile.ZIP_DEFLATED) as z:
-            for name in tpl.namelist():
-                if name.startswith('ppt/slides/slide') and name != f'ppt/slides/slide{SLIDE_NO}.xml':
-                    continue
-                if name.startswith('ppt/slides/_rels/slide') and name != f'ppt/slides/_rels/slide{SLIDE_NO}.xml.rels':
-                    continue
-                if name == 'ppt/_rels/presentation.xml.rels':
-                    z.writestr(name, new_pres_rels_xml)
-                elif name == 'ppt/presentation.xml':
-                    z.writestr(name, new_pres_xml)
-                elif name == '[Content_Types].xml':
-                    z.writestr(name, new_ct_xml)
-                elif name == f'ppt/slides/slide{SLIDE_NO}.xml':
-                    z.writestr('ppt/slides/slide1.xml', tpl.read(name))
-                elif name == f'ppt/slides/_rels/slide{SLIDE_NO}.xml.rels':
-                    z.writestr('ppt/slides/_rels/slide1.xml.rels', tpl.read(name))
-                else:
-                    z.writestr(name, tpl.read(name))
-            if 'docProps/app.xml' not in tpl.namelist():
-                z.writestr('docProps/app.xml', APP_XML)
-    print('Built', OUT)
+        build()
+    except Exception as e:
+        log(f'ERROR: {e!r}')
+        raise
 
 
 if __name__ == '__main__':
-    build()
+    main()
