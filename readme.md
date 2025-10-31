@@ -83,6 +83,37 @@ python tools/build_all.py
 python tools/build_all.py -h
 ```
 
+## 微模板批量生成（含 embeddings 新数据 .xlsx）
+- 目标：为 `charts/pXX` 下每个页面生成微模板目录，并在 `ppt/embeddings/` 生成对应的新数据 `.xlsx` 快照；保证样式与关系与原模板一致。
+- 旧/新数据约定：
+  - 保留模板中已有的嵌入（如 `*.xlsb`、`*.bin`、`*.xlsx`），这些作为“旧数据”；
+  - 额外生成 `embeddings/*.xlsx` 作为 `make_data` 后的新数据快照：
+    - 若原嵌入为 `*.xlsb`/`*.bin`，生成同名基底的 `*.xlsx`（不覆盖旧文件）；
+    - 若原嵌入本身就是 `*.xlsx`，生成 `{basename}__new.xlsx` 避免覆盖；
+
+### 使用方法
+- 指定页面批量生成（示例 p26/p27/p30）：
+```
+python tools/batch_make_micro_templates.py --pages p26 p27 p30
+```
+- 全量页面生成：
+```
+python tools/batch_make_micro_templates.py
+```
+- 可选参数：
+  - `--skip-make-data` 跳过每页的 `make_data.py` 执行（默认执行，如存在）；
+  - `--zip-preview` 将微模板目录打包为 `charts/pXX/output/pXX.template.pptx`，便于离线核查（不涉及 HTTP 预览）。
+
+### 产出位置与说明
+- 微模板目录：`charts/pXX/template/`，包含 `ppt/slides`、`ppt/charts`、`ppt/embeddings`、`ppt/media`、`docProps`、`[Content_Types].xml` 等完整结构。
+- 新数据工作簿：位于 `charts/pXX/template/ppt/embeddings/`，每个嵌入对应一个工作簿；若同一嵌入被多个图表引用，则为每个图表生成一个 Sheet（如 `chart12` 或 `chart12-final`）。
+- 样式一致性：脚本不修改 `chart*.xml.rels` 的目标引用，仅新增 `.xlsx` 快照文件；因此最终样式与关系保持与原模板一致。
+
+### 依赖与前置
+- 依赖：`requirements.txt` 已包含 `lxml>=5.2.1`、`openpyxl>=3.1`。
+- 模板路径：确保 `input/LRTBH-unzip/` 存在且为已解压的模板根目录（内部包含 `ppt/`）。
+
+
 ## 数据填充与修订约定
 - 每个图表目录可保留 `data.csv`（查询快照）与 `final_data.csv`（最终填充数据）。
 - 构建/填充脚本优先读取 `final_data.csv`，便于在特殊情况下手工修订数据。
@@ -99,5 +130,5 @@ python tools/build_all.py -h
 - `charts/**/` 中的中间产物按是否可重算进行选择性提交：`final_data.csv`（如为手工修订且构建必需）建议入库；`data.csv` 通常可不入库。
 
 ## 现状与一致性说明
-- 本仓库包含工具脚本：`tools/build_all.py`、`tools/fill_p10.py`、`tools/check_pptx.py`。
+- 本仓库包含工具脚本：`tools/build_all.py`、`tools/fill_p10.py`、`tools/check_pptx.py`、`tools/batch_make_micro_templates.py`。
 - 旧文档中提到的 `verify_unzip.py`、`scaffold_p10.py` 在当前仓库中未包含。如需这类能力，可在现有 `tools` 基础上补充，或以本 README 提供的等价流程替代。

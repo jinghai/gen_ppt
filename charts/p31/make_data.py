@@ -10,6 +10,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
+import zipfile
 
 import pandas as pd
 import yaml
@@ -17,6 +18,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent
 # gen_ppt 根目录（charts/pXX/ 的上两级）
 GEN = Path(__file__).resolve().parents[2]
+SLIDE_NO = 31
 
 # 可选的仓库根（用于读取 compute_metrics.yaml 的时间窗口）
 REPO_CANDIDATES = [GEN.parent, GEN]
@@ -34,22 +36,37 @@ if REPO_ROOT is None:
 
 METRICS_DB_DEFAULT = GEN / 'input' / 'metrics_v5.db'
 
-def _resolve_unz_root() -> Path:
+# 严格使用页面微模板中的图表目录；缺失直接报错，不再依赖 LRTBH-unzip
+PAGE_CHARTS_DIR = ROOT / 'template' / 'ppt' / 'charts'
+if not PAGE_CHARTS_DIR.exists():
+    raise FileNotFoundError(f"缺少页面微模板图表目录：{PAGE_CHARTS_DIR}")
+
+def _resolve_tpl() -> Path:
     try:
         cfg = yaml.safe_load((GEN / 'config.yaml').read_text(encoding='utf-8')) or {}
     except Exception:
         cfg = {}
-    tr = (cfg.get('project') or {}).get('template_root', 'input/LRTBH-unzip')
-    p = Path(tr)
+    op = (cfg.get('project') or {}).get('original_ppt', 'input/LRTBH.pptx')
+    p = Path(op)
     if not p.is_absolute():
-        p = GEN / tr
+        p = GEN / op
     return p
 
-def _charts_dir(unz: Path) -> Path:
-    d = unz / 'ppt' / 'charts'
-    return d if d.exists() else unz / 'charts'
+TPL = _resolve_tpl()
 
-UNZIPPED_CHARTS = _charts_dir(_resolve_unz_root())
+def _extract_slide_to_tmp(slide_no: int = SLIDE_NO) -> Tuple[Path, Path]:
+    tmp_dir = GEN / 'tmp' / f'p{slide_no}'
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    slide_path = tmp_dir / f'slide{slide_no}.xml'
+    rels_dir = tmp_dir / '_rels'
+    rels_dir.mkdir(parents=True, exist_ok=True)
+    rels_path = rels_dir / f'slide{slide_no}.xml.rels'
+    with zipfile.ZipFile(TPL, 'r') as z:
+        slide_bytes = z.read(f'ppt/slides/slide{slide_no}.xml')
+        rels_bytes = z.read(f'ppt/slides/_rels/slide{slide_no}.xml.rels')
+        slide_path.write_bytes(slide_bytes)
+        rels_path.write_bytes(rels_bytes)
+    return slide_path, rels_path
 
 @dataclass
 class Config:
@@ -387,8 +404,7 @@ def main() -> int:
         print('metrics_v5.db 不存在：', cfg.output_db)
         return 1
     # 解析 slide 与 rels，建立 chart→channel 映射
-    slide_xml = _resolve_unz_root() / 'ppt' / 'slides' / 'slide31.xml'
-    slide_rels = _resolve_unz_root() / 'ppt' / 'slides' / '_rels' / 'slide31.xml.rels'
+    slide_xml, slide_rels = _extract_slide_to_tmp(SLIDE_NO)
     channel_order = list((yaml.safe_load((GEN / 'config.yaml').read_text(encoding='utf-8')).get('fill_policy') or {}).get('channel_order') or (cfg.channels.keys()))
     channel_map = _parse_slide_chart_channel_map(slide_xml, slide_rels, [str(c) for c in channel_order])
 
@@ -406,7 +422,7 @@ def main() -> int:
                     xml_name = None
             if not xml_name:
                 xml_name = f"{chart_dir.name}.xml"
-            chart_xml = UNZIPPED_CHARTS / xml_name
+            chart_xml = PAGE_CHARTS_DIR / xml_name
             if not chart_xml.exists():
                 print('缺少图表 XML：', chart_xml)
                 continue

@@ -51,31 +51,34 @@ def _resolve_tpl() -> Path:
 TPL = _resolve_tpl()
 
 def _resolve_unz_root() -> Path:
+    # 已废弃：不再支持回退到全局模板解压目录（UNZ）。
+    # 为保持向后兼容，仍保留函数但不使用其返回值。
     try:
         cfg = yaml.safe_load((BASE / 'config.yaml').read_text(encoding='utf-8')) or {}
     except Exception:
         cfg = {}
-    tr = (cfg.get('project') or {}).get('template_root', 'input/LRTBH-unzip')
-    p = Path(tr)
+    tr = (cfg.get('project') or {}).get('template_root')
+    p = Path(tr) if tr else BASE / 'template'
     if not p.is_absolute():
-        p = BASE / tr
+        p = BASE / p
     return p
 
-UNZ = _resolve_unz_root()
 # 标准化输出目录至 page 目录下：charts/p27/output/p27.pptx
 OUT = Path(__file__).resolve().parent / 'output' / f'p{SLIDE_NO}.pptx'
 
-# 嵌入工作簿目录：优先页面内模板，其次回退到全局模板解压目录
+# 嵌入工作簿目录：严格使用页面微模板；缺失则报错
 PAGE_DIR = Path(__file__).resolve().parent
 EMBED_DIR = PAGE_DIR / 'template' / 'ppt' / 'embeddings'
 if not EMBED_DIR.exists():
-    EMBED_DIR = UNZ / 'ppt' / 'embeddings'
+    raise FileNotFoundError(f"Page micro-template embeddings missing: {EMBED_DIR}")
 
-# 图表与关系目录：优先页面微模板，其次回退到全局模板解压目录
-CHARTS_DIR_PAGE = PAGE_DIR / 'template' / 'ppt' / 'charts'
-CHARTS_RELS_DIR_PAGE = CHARTS_DIR_PAGE / '_rels'
-CHARTS_DIR_UNZ = (UNZ / 'ppt' / 'charts') if (UNZ / 'ppt' / 'charts').exists() else (UNZ / 'charts')
-CHARTS_RELS_DIR_UNZ = CHARTS_DIR_UNZ / '_rels'
+# 图表与关系目录：严格使用页面微模板；缺失则报错
+CHARTS_DIR = PAGE_DIR / 'template' / 'ppt' / 'charts'
+CHARTS_RELS_DIR = CHARTS_DIR / '_rels'
+if not CHARTS_DIR.exists():
+    raise FileNotFoundError(f"Page micro-template charts missing: {CHARTS_DIR}")
+if not CHARTS_RELS_DIR.exists():
+    raise FileNotFoundError(f"Chart rels directory missing: {CHARTS_RELS_DIR}")
 
 APP_XML = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
@@ -110,22 +113,37 @@ def build():
         pres_xml_bytes = tpl.read('ppt/presentation.xml')
         ct_bytes = tpl.read('[Content_Types].xml')
 
-    # 预加载图表及关系作为回退
+    # 预加载页面微模板中的图表及关系（严格策略：必须存在）
     charts_fallback = {}
-    # 1) 预加载页面微模板中的图表及关系（若存在）
-    if CHARTS_DIR_PAGE.exists():
-        for chart_file in CHARTS_DIR_PAGE.glob('chart*.xml'):
-            charts_fallback[chart_file.name] = chart_file.read_bytes()
-    if CHARTS_RELS_DIR_PAGE.exists():
-        for rels_file in CHARTS_RELS_DIR_PAGE.glob('chart*.xml.rels'):
-            charts_fallback[f'rels:{rels_file.name}'] = rels_file.read_bytes()
-    # 2) 再加载全局模板解压目录中的图表与关系作为回退，避免覆盖页面优先项
-    if CHARTS_DIR_UNZ.exists():
-        for chart_file in CHARTS_DIR_UNZ.glob('chart*.xml'):
-            charts_fallback.setdefault(chart_file.name, chart_file.read_bytes())
-    if CHARTS_RELS_DIR_UNZ.exists():
-        for rels_file in CHARTS_RELS_DIR_UNZ.glob('chart*.xml.rels'):
-            charts_fallback.setdefault(f'rels:{rels_file.name}', rels_file.read_bytes())
+    for chart_file in CHARTS_DIR.glob('chart*.xml'):
+        charts_fallback[chart_file.name] = chart_file.read_bytes()
+    for rels_file in CHARTS_RELS_DIR.glob('chart*.xml.rels'):
+        charts_fallback[f'rels:{rels_file.name}'] = rels_file.read_bytes()
+
+    # 严格校验：依据 slide 关系确认所用图表必须存在于页面微模板
+    slide_rels_bytes = None
+    with zipfile.ZipFile(TPL, 'r') as tpl:
+        try:
+            slide_rels_bytes = tpl.read(f'ppt/slides/_rels/slide{SLIDE_NO}.xml.rels')
+        except KeyError:
+            pass
+    if slide_rels_bytes:
+        rel_root = ET.fromstring(slide_rels_bytes)
+        used_charts = set()
+        used_rels = set()
+        for rel in rel_root.findall('{http://schemas.openxmlformats.org/package/2006/relationships}Relationship'):
+            typ = rel.get('Type') or ''
+            tgt = rel.get('Target') or ''
+            if typ.endswith('/chart') and '../charts/' in tgt:
+                nm = tgt.split('../charts/')[-1]
+                used_charts.add(nm)
+                used_rels.add(f'{nm}.rels')
+        missing = [nm for nm in used_charts if nm not in charts_fallback]
+        missing_rels = [nm for nm in used_rels if f'rels:{nm}' not in charts_fallback]
+        if missing or missing_rels:
+            raise FileNotFoundError(
+                f"Page micro-template charts/rels missing: charts={missing}, rels={missing_rels}"
+            )
 
     # 过滤 presentation.xml.rels，仅保留指向指定slide的关系（重定向到 slide1）以及非 slide 的其他关系
     def filter_pres_rels(rels_bytes: bytes):

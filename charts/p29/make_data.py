@@ -36,22 +36,10 @@ if REPO_ROOT is None:
 
 METRICS_DB_DEFAULT = GEN / 'input' / 'metrics_v5.db'
 
-def _resolve_unz_root() -> Path:
-    try:
-        cfg = yaml.safe_load((GEN / 'config.yaml').read_text(encoding='utf-8')) or {}
-    except Exception:
-        cfg = {}
-    tr = (cfg.get('project') or {}).get('template_root', 'input/LRTBH-unzip')
-    p = Path(tr)
-    if not p.is_absolute():
-        p = GEN / tr
-    return p
-
-def _charts_dir(unz: Path) -> Path:
-    d = unz / 'ppt' / 'charts'
-    return d if d.exists() else unz / 'charts'
-
-UNZIPPED_CHARTS = _charts_dir(_resolve_unz_root())
+# 严格使用页面微模板中的图表目录；缺失直接报错，不再依赖 LRTBH-unzip
+PAGE_CHARTS_DIR = ROOT / 'template' / 'ppt' / 'charts'
+if not PAGE_CHARTS_DIR.exists():
+    raise FileNotFoundError(f"缺少页面微模板图表目录：{PAGE_CHARTS_DIR}")
 
 @dataclass
 class Config:
@@ -82,9 +70,11 @@ def _load_yaml_cfg() -> Config:
     if not neticle_db.is_absolute():
         neticle_db = GEN / neticle_db
 
+    # 优先从根 config.yaml 的 update 读取时间窗口；无则回退到 compute_metrics.yaml
+    update = base_cfg.get('update') or {}
     tr = (yaml.safe_load(CFG_PATH.read_text(encoding='utf-8')).get('time_range') or {}) if CFG_PATH and CFG_PATH.exists() else {}
-    start_date = str(tr.get('start_date') or '2025-08-01')
-    end_date = str(tr.get('end_date') or '2025-08-31')
+    start_date = str((update.get('start_date') or tr.get('start_date') or '2025-08-01'))
+    end_date = str((update.get('end_date') or tr.get('end_date') or '2025-08-31'))
     fp = (base_cfg.get('fill_policy') or {})
     axis_day_base = int(fp.get('axis_day_base', 20300))
     country_id = int(filters.get('countryId') or 39)
@@ -306,7 +296,7 @@ def main() -> int:
                 xml_name = None
         if not xml_name:
             xml_name = f"{chart_dir.name}.xml"
-        chart_xml = UNZIPPED_CHARTS / xml_name
+        chart_xml = PAGE_CHARTS_DIR / xml_name
         if not chart_xml.exists():
             print('缺少图表 XML：', chart_xml)
             continue
