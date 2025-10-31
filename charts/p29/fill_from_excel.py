@@ -82,26 +82,24 @@ def prepare_chart_data(sov_data, pie_data, config):
     }
 
 def update_chart_data_json(chart_data):
-    """更新图表数据JSON文件"""
-    chart_dir = ROOT / 'chart115'
-    
+    """准备图表数据（不再依赖chart115目录）"""
     # 写入堆叠柱状图数据
     bar_data = {
         'labels': chart_data['bar_chart']['labels'],
         'series': chart_data['bar_chart']['series']
     }
     
-    # 更新data.json和final_data.json
-    data_json_path = chart_dir / 'data.json'
-    final_data_json_path = chart_dir / 'final_data.json'
+    # 创建临时目录保存数据（如果需要的话）
+    temp_dir = ROOT / 'tmp'
+    temp_dir.mkdir(exist_ok=True)
     
-    with open(data_json_path, 'w', encoding='utf-8') as f:
+    # 可选：保存数据到临时文件用于调试
+    temp_data_path = temp_dir / 'chart_data.json'
+    with open(temp_data_path, 'w', encoding='utf-8') as f:
         json.dump(bar_data, f, ensure_ascii=False, indent=2)
     
-    with open(final_data_json_path, 'w', encoding='utf-8') as f:
-        json.dump(bar_data, f, ensure_ascii=False, indent=2)
-    
-    print(f"已更新图表数据：{data_json_path}")
+    print(f"图表数据已准备完成，临时保存到：{temp_data_path}")
+    return bar_data
 
 def extract_ppt_template():
     """解压PPT模板到临时目录"""
@@ -132,56 +130,80 @@ def update_embedded_excel(extract_dir, chart_data):
         print("警告：未找到embeddings目录")
         return
     
-    excel_files = list(embeddings_dir.glob('*.xlsx'))
+    # 查找.xlsb或.xlsx文件
+    excel_files = list(embeddings_dir.glob('*.xlsx')) + list(embeddings_dir.glob('*.xlsb'))
     if not excel_files:
         print("警告：未找到嵌入的Excel文件")
         return
     
-    # 更新第一个Excel文件
-    excel_file = excel_files[0]
-    print(f"正在更新嵌入的Excel文件：{excel_file}")
+    # 使用第一个Excel文件
+    original_excel_file = excel_files[0]
+    print(f"找到嵌入的Excel文件：{original_excel_file}")
+    
+    # 如果是.xlsb文件，我们需要创建一个新的.xlsx文件来替换它
+    if original_excel_file.suffix.lower() == '.xlsb':
+        new_excel_file = embeddings_dir / 'Workbook1.xlsx'
+        print(f"将.xlsb文件替换为.xlsx文件：{new_excel_file}")
+        
+        # 更新关系文件中的引用
+        chart_rels_file = extract_dir / 'ppt' / 'charts' / '_rels' / 'chart1.xml.rels'
+        if chart_rels_file.exists():
+            with open(chart_rels_file, 'r', encoding='utf-8') as f:
+                rels_content = f.read()
+            
+            # 替换.xlsb为.xlsx
+            rels_content = rels_content.replace('Workbook1.xlsb', 'Workbook1.xlsx')
+            
+            with open(chart_rels_file, 'w', encoding='utf-8') as f:
+                f.write(rels_content)
+            print("已更新图表关系文件中的引用")
+        
+        # 删除原始.xlsb文件
+        original_excel_file.unlink()
+        excel_file = new_excel_file
+    else:
+        excel_file = original_excel_file
     
     try:
-        # 打开Excel文件
-        wb = openpyxl.load_workbook(excel_file)
-        
-        # 更新数据（假设数据在第一个工作表）
+        # 创建新的Excel工作簿
+        wb = openpyxl.Workbook()
         ws = wb.active
-        
-        # 清除现有数据（保留表头）
-        for row in ws.iter_rows(min_row=2):
-            for cell in row:
-                cell.value = None
+        ws.title = 'Sheet1'
         
         # 写入新的堆叠柱状图数据
-        row_idx = 2
         channels = chart_data['bar_chart']['labels']
+        series_data = chart_data['bar_chart']['series']
         
-        # 写入渠道标签
-        for i, channel in enumerate(channels):
-            ws.cell(row=row_idx + i, column=1, value=channel)
+        # 写入表头：第一列是渠道，其余列是品牌
+        ws.cell(row=1, column=1, value='Channel')
+        for col_idx, series in enumerate(series_data):
+            ws.cell(row=1, column=col_idx + 2, value=series['name'])
         
-        # 写入各品牌数据
-        col_idx = 2
-        for series in chart_data['bar_chart']['series']:
-            brand = series['name']
-            values = series['values']
+        # 写入数据
+        for row_idx, channel in enumerate(channels):
+            ws.cell(row=row_idx + 2, column=1, value=channel)
             
-            # 写入品牌名称（表头）
-            ws.cell(row=1, column=col_idx, value=brand)
-            
-            # 写入数据
-            for i, value in enumerate(values):
-                ws.cell(row=row_idx + i, column=col_idx, value=value)
-            
-            col_idx += 1
+            for col_idx, series in enumerate(series_data):
+                value = series['values'][row_idx]
+                ws.cell(row=row_idx + 2, column=col_idx + 2, value=value)
         
         # 保存Excel文件
         wb.save(excel_file)
         print(f"已更新嵌入的Excel文件：{excel_file}")
         
+        # 显示更新后的数据预览
+        print("更新后的数据预览：")
+        print(f"渠道数量: {len(channels)}")
+        print(f"品牌数量: {len(series_data)}")
+        print("前几行数据：")
+        for i, channel in enumerate(channels[:3]):
+            row_data = [channel] + [series['values'][i] for series in series_data]
+            print(f"  {row_data}")
+        
     except Exception as e:
         print(f"更新嵌入Excel文件时出错：{e}")
+        import traceback
+        traceback.print_exc()
 
 def repack_ppt(extract_dir, output_path):
     """重新打包PPT文件"""
@@ -204,6 +226,12 @@ def main():
     """主函数"""
     try:
         print("开始从Excel数据生成PPT...")
+        
+        # 清理之前的临时文件
+        temp_dir = ROOT / 'tmp'
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+            print("已清理之前的临时文件")
         
         # 加载配置
         config = load_config()
@@ -246,11 +274,12 @@ def main():
         print("  - 右侧：品牌总体声量份额饼图")
         print("  - 嵌入的Excel数据已更新，可在PowerPoint中编辑")
         
-        # 清理临时文件
+        # 保留临时文件用于调试
         temp_dir = ROOT / 'tmp'
         if temp_dir.exists():
-            shutil.rmtree(temp_dir)
-            print("已清理临时文件")
+            print(f"临时文件已保留在：{temp_dir}")
+            print("  - chart_data.json: 图表数据")
+            print("  - ppt_extracted/: 解压的PPT内容")
         
         return 0
         
