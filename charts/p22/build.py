@@ -1,4 +1,34 @@
 #!/usr/bin/env python3
+# 日志：双写 stdout/stderr 到 logs/build.log（单页日志）
+import sys, atexit
+from datetime import datetime
+from pathlib import Path as _PathForLogging
+
+def _init_file_logging():
+    page_dir = _PathForLogging(__file__).resolve().parent
+    logs_dir = page_dir / 'logs'
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    fh = open(logs_dir / 'build.log', 'a', encoding='utf-8')
+    class _Tee:
+        def __init__(self, *streams): self.streams = streams
+        def write(self, data):
+            for s in self.streams:
+                try: s.write(data); s.flush()
+                except Exception: pass
+        def flush(self):
+            for s in self.streams:
+                try: s.flush()
+                except Exception: pass
+    sys.stdout = _Tee(sys.__stdout__, fh)
+    sys.stderr = _Tee(sys.__stderr__, fh)
+    print(f"[log] start {datetime.utcnow().isoformat()}Z")
+    def _close():
+        print(f"[log] end {datetime.utcnow().isoformat()}Z")
+        try: fh.flush(); fh.close()
+        except Exception: pass
+    atexit.register(_close)
+
+_init_file_logging()
 import zipfile
 from pathlib import Path
 import yaml
@@ -32,10 +62,25 @@ def _resolve_unz_root() -> Path:
     return p
 
 UNZ = _resolve_unz_root()
-OUT = BASE / 'output' / f'p{SLIDE_NO}.pptx'
+# 标准化输出目录至页面内，避免跨页共享输出目录导致混淆
+PAGE_DIR = Path(__file__).resolve().parent
+OUT = PAGE_DIR / 'output' / f'p{SLIDE_NO}.pptx'
 
-CHARTS_DIR = (UNZ / 'ppt' / 'charts') if (UNZ / 'ppt' / 'charts').exists() else (UNZ / 'charts')
-CHARTS_RELS_DIR = CHARTS_DIR / '_rels'
+# 嵌入工作簿目录：优先页面内模板，其次回退到全局模板解压目录
+EMBED_DIR = PAGE_DIR / 'template' / 'ppt' / 'embeddings'
+if not EMBED_DIR.exists():
+    EMBED_DIR = UNZ / 'ppt' / 'embeddings'
+
+# 图表目录优先使用页面微模板，其次回退到全局模板解压目录
+# 优先级：charts/p22/template/ppt/charts → UNZ/ppt/charts → UNZ/charts
+PAGE_CHARTS_DIR = PAGE_DIR / 'template' / 'ppt' / 'charts'
+PAGE_CHARTS_RELS_DIR = PAGE_CHARTS_DIR / '_rels'
+if PAGE_CHARTS_DIR.exists():
+    CHARTS_DIR = PAGE_CHARTS_DIR
+    CHARTS_RELS_DIR = PAGE_CHARTS_RELS_DIR
+else:
+    CHARTS_DIR = (UNZ / 'ppt' / 'charts') if (UNZ / 'ppt' / 'charts').exists() else (UNZ / 'charts')
+    CHARTS_RELS_DIR = CHARTS_DIR / '_rels'
 
 APP_XML = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
@@ -111,7 +156,7 @@ def build():
         return ET.tostring(tree, xml_declaration=True, encoding='UTF-8', standalone="yes")
 
     # 过滤 Content_Types：移除全部 slide 覆盖项后添加 slide1
-    def filter_content_types(ct_bytes: bytes):
+    def filter_content_types(ct_bytes: bytes, embed_files: list[str]):
         ct = ET.fromstring(ct_bytes)
         ns_ct = 'http://schemas.openxmlformats.org/package/2006/content-types'
         for o in list(ct.findall('{%s}Override' % ns_ct)):
@@ -123,13 +168,24 @@ def build():
         has_app = any((o.get('PartName') == '/docProps/app.xml') for o in ct.findall('{%s}Override' % ns_ct))
         if not has_app:
             ET.SubElement(ct, '{%s}Override' % ns_ct, PartName='/docProps/app.xml', ContentType='application/vnd.openxmlformats-officedocument.extended-properties+xml')
+        # 添加嵌入式 xlsx 覆盖项
+        for nm in embed_files:
+            ET.SubElement(ct, '{%s}Override' % ns_ct, PartName=f'/ppt/embeddings/{nm}', ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         return ET.tostring(ct, xml_declaration=True, encoding='UTF-8', standalone="yes")
 
     # 生成新文件：复制模板的所有项，删除除指定slide之外的其它幻灯片及其 rels，替换 presentation 与 Content_Types；并重命名指定slide→slide1
     with zipfile.ZipFile(TPL, 'r') as tpl:
         new_pres_rels_xml, slide_rel_id = filter_pres_rels(pres_rels_bytes)
         new_pres_xml = filter_pres_xml(pres_xml_bytes, slide_rel_id)
-        new_ct_xml = filter_content_types(ct_bytes)
+        # 收集嵌入式 xlsx（跳过 xlsb）
+        embed_files = []
+        try:
+            if EMBED_DIR.exists():
+                for f in EMBED_DIR.glob('Microsoft_Office_Excel_Binary_Worksheet*.xlsx'):
+                    embed_files.append(f.name)
+        except Exception:
+            embed_files = []
+        new_ct_xml = filter_content_types(ct_bytes, embed_files)
         
         # 读取指定slide的关系文件以获取图表信息
         slide_rels_bytes = None
@@ -157,6 +213,9 @@ def build():
                 elif name == f'ppt/slides/_rels/slide{SLIDE_NO}.xml.rels':
                     # 重命名为 slide1.xml.rels
                     z.writestr('ppt/slides/_rels/slide1.xml.rels', tpl.read(name))
+                elif name.startswith('ppt/embeddings/Microsoft_Office_Excel_Binary_Worksheet') and name.endswith('.xlsb'):
+                    # 跳过模板中的 xlsb，避免与新生成的 xlsx 冲突
+                    continue
                 elif name.startswith('ppt/charts/chart') and name.endswith('.xml'):
                     # 使用回退图表数据（如果有）
                     chart_name = name.split('/')[-1]
@@ -172,6 +231,11 @@ def build():
             # Write docProps/app.xml if it doesn't exist
             if 'docProps/app.xml' not in tpl.namelist():
                 z.writestr('docProps/app.xml', APP_XML)
+            # 打包嵌入式 xlsx（若存在）
+            for nm in embed_files:
+                src = EMBED_DIR / nm
+                if src.exists():
+                    z.writestr(f'ppt/embeddings/{nm}', src.read_bytes())
     print(f'Built {OUT}')
 
 

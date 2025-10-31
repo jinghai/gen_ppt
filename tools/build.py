@@ -660,7 +660,7 @@ def main():
         stats = run_page_builders(args.pages, logger=logger, fail_fast=args.fail_fast)
         logger.info('Per-page builders summary: executed=%d succeeded=%d failed=%d', stats['executed'], stats['succeeded'], stats['failed'])
 
-    # 始终合成最终稿；当模板损坏/不可读时自动回退
+    # 始终合成最终稿；当模板损坏/不可读时严格报错（不允许回退 UNZIPPED）
     if _is_readable_zip(template_ppt):
         compose_final(template_ppt, out_path, mode, charts)
         # 记录与终端一致的合成信息
@@ -675,9 +675,8 @@ def main():
             })
             logger.info('Final validation summary: total=%s changed=%s unchanged=%s', summary.get('total'), summary.get('changed'), summary.get('unchanged'))
     else:
-        print('[warn] original template not readable, composing from UNZIPPED fallback')
-        logger.warning('Original template not readable, composing from UNZIPPED fallback')
-        compose_without_template(out_path)
+        logger.error('Original template not readable per strict policy; aborting without UNZIPPED fallback: %s', template_ppt)
+        raise FileNotFoundError(f'Original template not readable: {template_ppt}')
     # 已移除原始版组合调用，保持构建流程聚焦在最终稿
 
 

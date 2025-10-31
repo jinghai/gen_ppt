@@ -6,6 +6,10 @@ output:
 # p10 填充特性：仅对 slide10 的散点/类别应用
 fill_policy:
   axis_day_base: 20300
+  # 是否保留外部工作簿链接（允许在 PowerPoint 中“编辑数据”）
+  keep_external_data: true
+  # 外部工作簿格式：xlsb（默认）或 xlsx
+  external_data_format: xlsx
 
 # chart9 特性配置
 chart9:

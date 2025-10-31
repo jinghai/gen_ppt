@@ -1,4 +1,47 @@
 #!/usr/bin/env python3
+# 增加文件日志输出：stdout/stderr 同步写入本页 logs/build.log（不改变原有功能）
+import sys, atexit
+from datetime import datetime
+from pathlib import Path as _PathForLogging
+
+def _init_file_logging():
+    """初始化文件日志到 charts/p10/logs/build.log，并保留控制台输出。"""
+    page_dir = _PathForLogging(__file__).resolve().parent
+    logs_dir = page_dir / 'logs'
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_file = logs_dir / 'build.log'
+    fh = open(log_file, 'a', encoding='utf-8')
+
+    class _Tee:
+        def __init__(self, *streams):
+            self.streams = streams
+        def write(self, data):
+            for s in self.streams:
+                try:
+                    s.write(data)
+                    s.flush()
+                except Exception:
+                    pass
+        def flush(self):
+            for s in self.streams:
+                try:
+                    s.flush()
+                except Exception:
+                    pass
+
+    sys.stdout = _Tee(sys.__stdout__, fh)
+    sys.stderr = _Tee(sys.__stderr__, fh)
+    print(f"[log] start {datetime.utcnow().isoformat()}Z")
+
+    def _close():
+        print(f"[log] end {datetime.utcnow().isoformat()}Z")
+        try:
+            fh.flush(); fh.close()
+        except Exception:
+            pass
+    atexit.register(_close)
+
+_init_file_logging()
 import zipfile
 from pathlib import Path
 import re
@@ -31,7 +74,8 @@ def _resolve(p: str) -> Path:
     return rp if rp.is_absolute() else ROOT / p
 
 TEMPLATE_PPT = _resolve(_proj.get('original_ppt', 'input/LRTBH.pptx'))
-OUT_PPTX = _resolve((_proj.get('output_root', 'output'))) / 'p10.pptx'
+# 标准化输出目录至 page 目录下：charts/p10/output/p10.pptx
+OUT_PPTX = Path(__file__).resolve().parent / 'output' / 'p10.pptx'
 APP_XML = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
   <Application>Microsoft Office PowerPoint</Application>
@@ -39,6 +83,10 @@ APP_XML = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 '''
 
 UNZIP = _resolve(_proj.get('template_root', 'input/LRTBH-unzip'))
+
+# 页面本地微模板目录（如存在则优先使用，以读取已填充的 chart XML）
+PAGE_DIR = Path(__file__).resolve().parent
+PAGE_TEMPLATE = PAGE_DIR / 'template'
 
 def _pref(*parts: str) -> Path:
     nested = UNZIP / 'ppt'
@@ -50,13 +98,24 @@ SLIDE_RELS_SRC = _pref('slides', '_rels', f'slide{SLIDE_NO}.xml.rels')
 THEME_SRC = _pref('theme', 'theme1.xml')
 
 def _charts_dir() -> Path:
-    d = UNZIP / 'ppt' / 'charts'
-    return d if d.exists() else UNZIP / 'charts'
+    # 严格使用页面微模板 charts/p10/template/ppt/charts；缺失则报错
+    d = PAGE_TEMPLATE / 'ppt' / 'charts'
+    if not d.exists():
+        raise FileNotFoundError(f'Page micro-template charts missing: {d}')
+    return d
 
 CHARTS_DIR = _charts_dir()
 CHARTS_RELS_DIR = CHARTS_DIR / '_rels'
-EMBED_DIR = _pref('embeddings')
-MEDIA_DIR = _pref('media')
+# embeddings/media：若页面模板存在则优先其位置，否则仍指向 UNZIP
+def _pref_page(*parts: str) -> Path:
+    cand = PAGE_TEMPLATE / 'ppt'
+    cand = cand.joinpath(*parts)
+    if not cand.exists():
+        raise FileNotFoundError(f'Page micro-template missing: {cand}')
+    return cand
+
+EMBED_DIR = _pref_page('embeddings')
+MEDIA_DIR = _pref_page('media')
 
 
 def _read(p: Path) -> str:
@@ -64,21 +123,37 @@ def _read(p: Path) -> str:
 
 
 def build():
+    # 确保输出目录存在（charts/p10/output）
+    OUT_PPTX.parent.mkdir(parents=True, exist_ok=True)
     # 使用完整模板复制并仅保留第10页，同时替换 chart8/9（如有）
     with zipfile.ZipFile(TEMPLATE_PPT, 'r') as tpl:
         pres_rels_bytes = tpl.read('ppt/_rels/presentation.xml.rels')
         pres_xml_bytes = tpl.read('ppt/presentation.xml')
         ct_bytes = tpl.read('[Content_Types].xml')
-        # 预加载模板中的图表及关系（作为回退）
-        chart8_tpl = tpl.read('ppt/charts/chart8.xml')
-        chart9_tpl = tpl.read('ppt/charts/chart9.xml')
-        chart8_rels_tpl = tpl.read('ppt/charts/_rels/chart8.xml.rels')
-        chart9_rels_tpl = tpl.read('ppt/charts/_rels/chart9.xml.rels')
+        # 严格策略下不使用模板回退；缺失将报错
 
-    chart8_bytes = (CHARTS_DIR / 'chart8.xml').read_bytes() if (CHARTS_DIR / 'chart8.xml').exists() else chart8_tpl
-    chart9_bytes = (CHARTS_DIR / 'chart9.xml').read_bytes() if (CHARTS_DIR / 'chart9.xml').exists() else chart9_tpl
-    chart8_rels_bytes = (CHARTS_RELS_DIR / 'chart8.xml.rels').read_bytes() if (CHARTS_RELS_DIR / 'chart8.xml.rels').exists() else chart8_rels_tpl
-    chart9_rels_bytes = (CHARTS_RELS_DIR / 'chart9.xml.rels').read_bytes() if (CHARTS_RELS_DIR / 'chart9.xml.rels').exists() else chart9_rels_tpl
+    if not (CHARTS_DIR / 'chart8.xml').exists():
+        raise FileNotFoundError(f'Missing chart: {CHARTS_DIR / "chart8.xml"}')
+    if not (CHARTS_DIR / 'chart9.xml').exists():
+        raise FileNotFoundError(f'Missing chart: {CHARTS_DIR / "chart9.xml"}')
+    if not CHARTS_RELS_DIR.exists():
+        raise FileNotFoundError(f'Missing chart rels directory: {CHARTS_RELS_DIR}')
+    if not (CHARTS_RELS_DIR / 'chart8.xml.rels').exists():
+        raise FileNotFoundError(f'Missing rels: {CHARTS_RELS_DIR / "chart8.xml.rels"}')
+    if not (CHARTS_RELS_DIR / 'chart9.xml.rels').exists():
+        raise FileNotFoundError(f'Missing rels: {CHARTS_RELS_DIR / "chart9.xml.rels"}')
+    chart8_bytes = (CHARTS_DIR / 'chart8.xml').read_bytes()
+    chart9_bytes = (CHARTS_DIR / 'chart9.xml').read_bytes()
+    chart8_rels_bytes = (CHARTS_RELS_DIR / 'chart8.xml.rels').read_bytes()
+    chart9_rels_bytes = (CHARTS_RELS_DIR / 'chart9.xml.rels').read_bytes()
+
+    # 收集页面模板中的 embeddings（优先使用页面模板位置）
+    embed_files = []
+    if EMBED_DIR.exists():
+        for p in sorted(EMBED_DIR.glob('*')):
+            # 仅新增写入 xlsx，避免与模板内已存在的 xlsb 重复
+            if p.suffix.lower() == '.xlsx':
+                embed_files.append(p)
 
     # 过滤 presentation.rels：仅保留 slide10（重定向到 slide1）与非 slide 关系
     def filter_pres_rels(rels_bytes: bytes):
@@ -112,7 +187,7 @@ def build():
         return ET.tostring(tree, xml_declaration=True, encoding='UTF-8', standalone="yes")
 
     # 过滤 Content_Types：仅保留 slide1 覆盖项，并补充 docProps/app.xml 覆盖
-    def filter_content_types(ct_bytes: bytes):
+    def filter_content_types(ct_bytes: bytes, embed_files: list):
         ct = ET.fromstring(ct_bytes)
         ns_ct = 'http://schemas.openxmlformats.org/package/2006/content-types'
         for o in list(ct.findall('{%s}Override' % ns_ct)):
@@ -121,11 +196,21 @@ def build():
                 ct.remove(o)
         ET.SubElement(ct, '{%s}Override' % ns_ct, PartName='/ppt/slides/slide1.xml', ContentType='application/vnd.openxmlformats-officedocument.presentationml.slide+xml')
         ET.SubElement(ct, '{%s}Override' % ns_ct, PartName='/docProps/app.xml', ContentType='application/vnd.openxmlformats-officedocument.extended-properties+xml')
+        # 为新增的嵌入式工作簿添加覆盖项
+        ext_ct = {
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.xlsb': 'application/vnd.ms-excel.sheet.binary.macroEnabled.12',
+        }
+        for ef in embed_files:
+            part_name = f'/ppt/embeddings/{ef.name}'
+            content_type = ext_ct.get(ef.suffix.lower())
+            if content_type:
+                ET.SubElement(ct, '{%s}Override' % ns_ct, PartName=part_name, ContentType=content_type)
         return ET.tostring(ct, xml_declaration=True, encoding='UTF-8', standalone="yes")
 
     new_pres_rels_xml, slide_rel_id = filter_pres_rels(pres_rels_bytes)
     new_pres_xml = filter_pres_xml(pres_xml_bytes, slide_rel_id)
-    new_ct_xml = filter_content_types(ct_bytes)
+    new_ct_xml = filter_content_types(ct_bytes, embed_files)
 
     with zipfile.ZipFile(TEMPLATE_PPT, 'r') as tpl:
         with zipfile.ZipFile(OUT_PPTX, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -156,6 +241,9 @@ def build():
                     z.writestr(name, chart9_rels_bytes)
                 else:
                     z.writestr(name, tpl.read(name))
+            # 写入/覆盖 embeddings（来自页面微模板）
+            for ef in embed_files:
+                z.writestr(f'ppt/embeddings/{ef.name}', ef.read_bytes())
             if 'docProps/app.xml' not in tpl.namelist():
                 z.writestr('docProps/app.xml', APP_XML)
 
@@ -174,7 +262,7 @@ def run_make_data():
 
 def run_fillers():
     page_dir = Path(__file__).resolve().parent
-    chart_dirs = sorted([d for d in page_dir.iterdir() if d.is_dir() and re.match(r'^chart\\d+$', d.name)])
+    chart_dirs = sorted([d for d in page_dir.iterdir() if d.is_dir() and re.match(r'^chart\d+$', d.name)])
     for d in chart_dirs:
         fill = d / 'fill.py'
         if fill.exists():
@@ -188,3 +276,9 @@ if __name__ == '__main__':
     run_make_data()
     run_fillers()
     build()
+    # 收集页面模板中的 embeddings（优先使用页面模板位置）
+    embed_files = []
+    if EMBED_DIR.exists():
+        for p in sorted(EMBED_DIR.glob('*')):
+            if p.suffix.lower() in ('.xlsx', '.xlsb'):
+                embed_files.append(p)

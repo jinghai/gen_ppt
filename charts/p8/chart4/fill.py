@@ -11,7 +11,7 @@ TOOL_CANDIDATES = [
 for tc in TOOL_CANDIDATES:
     if tc.exists():
         sys.path.append(str(tc))
-from fill_chart_xml import fill_chart  # type: ignore
+from fill_chart_xml import fill_chart, resolve_chart_xml_path  # type: ignore
 
 NS = {
   'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart',
@@ -78,7 +78,8 @@ def _load_scatter_json(fp: Path):
 
 
 def main():
-    chart_path = Path((ROOT / 'chart_path.txt').read_text(encoding='utf-8').strip())
+    chart_path_raw = Path((ROOT / 'chart_path.txt').read_text(encoding='utf-8').strip())
+    chart_path = resolve_chart_xml_path(chart_path_raw)
     t = _chart_type(chart_path)
     final_json = ROOT / 'final_data.json'
     data_json = ROOT / 'data.json'

@@ -31,3 +31,5 @@ output:
   final_mode: updated
 fill_policy:
   axis_day_base: 20300
+  keep_external_data: true
+  external_data_format: xlsx

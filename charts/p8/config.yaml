@@ -1,12 +1,14 @@
 output:
   replace_charts:
-  - chart3.xml
-  - chart2.xml
-  - chart5.xml
-  - chart4.xml
   - chart1.xml
-  - chart7.xml
+  - chart2.xml
+  - chart3.xml
+  - chart4.xml
+  - chart5.xml
   - chart6.xml
+  - chart7.xml
   final_mode: updated
 fill_policy:
   axis_day_base: 20300
+  keep_external_data: true
+  external_data_format: xlsx
