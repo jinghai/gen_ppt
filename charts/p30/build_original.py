@@ -16,6 +16,7 @@ from __future__ import annotations
 import zipfile
 from datetime import datetime
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 
 def _page_dir() -> Path:
@@ -77,10 +78,68 @@ def assert_micro_template_integrity() -> None:
         raise FileNotFoundError(f'Charts rels directory missing: {CHARTS_RELS_DIR}')
 
 
+def _resolve_rel_target(rel_file: Path, target: str) -> Path:
+    base_dir = rel_file.parent.parent
+    cand = (base_dir / Path(target)).resolve()
+    return cand
+
+
+def _clean_slide1_rels_and_content_types() -> tuple[int, int]:
+    removed_rels = 0
+    removed_ct = 0
+
+    slide_rels = TEMPLATE_DIR / 'ppt' / 'slides' / '_rels' / 'slide1.xml.rels'
+    if slide_rels.exists():
+        try:
+            ET.register_namespace('', 'http://schemas.openxmlformats.org/package/2006/relationships')
+            tree = ET.parse(slide_rels)
+            root = tree.getroot()
+            rel_tag = '{http://schemas.openxmlformats.org/package/2006/relationships}Relationship'
+            bad = []
+            for rel in list(root.findall(rel_tag)):
+                tgt = rel.get('Target') or ''
+                cand = _resolve_rel_target(slide_rels, tgt)
+                inside_tpl = (TEMPLATE_DIR in cand.parents) or (cand == TEMPLATE_DIR)
+                if not inside_tpl or not cand.exists():
+                    bad.append(rel)
+            for r in bad:
+                root.remove(r)
+                removed_rels += 1
+            if bad:
+                tree.write(slide_rels, encoding='utf-8', xml_declaration=True)
+        except Exception:
+            pass
+
+    ct_path = TEMPLATE_DIR / '[Content_Types].xml'
+    if ct_path.exists():
+        try:
+            tree = ET.parse(ct_path)
+            root = tree.getroot()
+            override_tag = '{http://schemas.openxmlformats.org/package/2006/content-types}Override'
+            present = {f'/{p.relative_to(TEMPLATE_DIR).as_posix()}' for p in TEMPLATE_DIR.rglob('*') if p.is_file()}
+            bad = []
+            for ov in list(root.findall(override_tag)):
+                part = ov.get('PartName') or ''
+                if part and part not in present:
+                    bad.append(ov)
+            for ov in bad:
+                root.remove(ov)
+                removed_ct += 1
+            if bad:
+                tree.write(ct_path, encoding='utf-8', xml_declaration=True)
+        except Exception:
+            pass
+
+    return removed_rels, removed_ct
+
+
 def build() -> None:
     """将微模板完整打包为原始 PPTX（单页）。"""
     log('Start build_original')
     assert_micro_template_integrity()
+    rel_rm, ct_rm = _clean_slide1_rels_and_content_types()
+    if rel_rm or ct_rm:
+        log(f'Cleaned invalid refs: slide1.rels removed={rel_rm}, [Content_Types] removed={ct_rm}')
     OUT_PPTX.parent.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(OUT_PPTX, 'w', compression=zipfile.ZIP_DEFLATED) as z:

@@ -77,6 +77,57 @@ def _required_embeddings(charts_rels_dir: Path) -> Set[str]:
     return required
 
 
+def _resolve_rel_target(rel_file: Path, target: str) -> Path:
+    """相对 slide1.xml.rels 解析 Target 路径为模板内绝对路径。"""
+    base_dir = rel_file.parent.parent
+    return (base_dir / Path(target)).resolve()
+
+
+def _clean_slide1_rels_and_content_types() -> tuple[int, int]:
+    """移除无效关系与无效 CT Override，提高原始 PPTX 的可打开性。"""
+    removed_rels = 0
+    removed_ct = 0
+
+    if SLIDE_RELS.exists():
+        try:
+            root = ET.parse(str(SLIDE_RELS)).getroot()
+            rel_tag = '{http://schemas.openxmlformats.org/package/2006/relationships}Relationship'
+            bad = []
+            for rel in list(root.findall(rel_tag)):
+                tgt = rel.get('Target') or ''
+                cand = _resolve_rel_target(SLIDE_RELS, tgt)
+                inside_tpl = (TEMPLATE_DIR in cand.parents) or (cand == TEMPLATE_DIR)
+                if (not inside_tpl) or (not cand.exists()):
+                    bad.append(rel)
+            for r in bad:
+                root.remove(r)
+                removed_rels += 1
+            if bad:
+                ET.ElementTree(root).write(str(SLIDE_RELS), encoding='utf-8', xml_declaration=True)
+        except Exception:
+            pass
+
+    if CONTENT_TYPES.exists():
+        try:
+            root = ET.parse(str(CONTENT_TYPES)).getroot()
+            override_tag = '{http://schemas.openxmlformats.org/package/2006/content-types}Override'
+            present = {f'/{p.relative_to(TEMPLATE_DIR).as_posix()}' for p in TEMPLATE_DIR.rglob('*') if p.is_file()}
+            bad = []
+            for ov in list(root.findall(override_tag)):
+                part = ov.get('PartName') or ''
+                if part and part not in present:
+                    bad.append(ov)
+            for ov in bad:
+                root.remove(ov)
+                removed_ct += 1
+            if bad:
+                ET.ElementTree(root).write(str(CONTENT_TYPES), encoding='utf-8', xml_declaration=True)
+        except Exception:
+            pass
+
+    return removed_rels, removed_ct
+
+
 def _validate_template() -> None:
     if not TEMPLATE_DIR.exists():
         raise FileNotFoundError(f'Micro-template missing: {TEMPLATE_DIR}')
@@ -111,6 +162,9 @@ def _zip_template_dir(tpl_dir: Path, out_pptx: Path) -> None:
 def main() -> int:
     _log(f'[p{SLIDE_NO}] build_original start')
     _validate_template()
+    rel_rm, ct_rm = _clean_slide1_rels_and_content_types()
+    if rel_rm or ct_rm:
+        _log(f'Cleaned invalid refs: slide1.rels removed={rel_rm}, [Content_Types] removed={ct_rm}')
     _zip_template_dir(TEMPLATE_DIR, OUT_PPTX)
     _log(f'[p{SLIDE_NO}] build_original done: {OUT_PPTX}')
     return 0

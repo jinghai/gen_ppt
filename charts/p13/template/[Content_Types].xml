@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
@@ -13,6 +13,4 @@
   <Override PartName="/ppt/slideMasters/slideMaster2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>
   <Override PartName="/ppt/charts/chart10.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>
   <Override PartName="/ppt/charts/chart11.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>
-  <Override PartName="/ppt/embeddings/Microsoft_Office_Excel_Binary_Worksheet10.xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/>
-  <Override PartName="/ppt/embeddings/Microsoft_Office_Excel_Binary_Worksheet11.xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/>
-</Types>
+  </Types>

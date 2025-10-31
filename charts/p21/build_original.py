@@ -61,6 +61,71 @@ def _log(msg: str) -> None:
     print(line, end='')
 
 
+def _resolve_rel_target(rel_file: Path, target: str) -> Path:
+    """基于 slide1.xml.rels 的位置解析关系的 Target 为模板内绝对路径。
+
+    - rel_file 通常为 `ppt/slides/_rels/slide1.xml.rels`
+    - 关系中的 Target 多为相对路径，例如 `../notesSlides/notesSlide29.xml`
+    - 解析后得到 `TEMPLATE_DIR` 下的绝对路径，用于存在性判断
+    """
+    base_dir = rel_file.parent.parent  # 指向 `ppt/slides`
+    return (base_dir / Path(target)).resolve()
+
+
+def _clean_slide1_rels_and_content_types() -> tuple[int, int]:
+    """清理无效关系与内容类型覆盖，避免 OPC 包不一致导致 PPT 无法打开。
+
+    - 删除 `slide1.xml.rels` 中 Target 指向模板外或不存在文件的关系（常见为缺失的 notesSlides/notesMasters）
+    - 删除 `[Content_Types].xml` 中指向不存在部件的 `<Override>` 条目
+    返回：删除的关系数量、删除的 CT Override 数量
+    """
+    removed_rels = 0
+    removed_ct = 0
+
+    # 1) 关系清理：仅针对 slide1.xml.rels
+    if SLIDE_RELS.exists():
+        try:
+            root = ET.parse(str(SLIDE_RELS)).getroot()
+            rel_tag = '{http://schemas.openxmlformats.org/package/2006/relationships}Relationship'
+            bad = []
+            for rel in list(root.findall(rel_tag)):
+                tgt = rel.get('Target') or ''
+                cand = _resolve_rel_target(SLIDE_RELS, tgt)
+                inside_tpl = (TEMPLATE_DIR in cand.parents) or (cand == TEMPLATE_DIR)
+                if (not inside_tpl) or (not cand.exists()):
+                    bad.append(rel)
+            for r in bad:
+                root.remove(r)
+                removed_rels += 1
+            if bad:
+                # 使用 lxml 写回，保留原有命名空间与声明
+                ET.ElementTree(root).write(str(SLIDE_RELS), encoding='utf-8', xml_declaration=True)
+        except Exception:
+            # 容忍解析异常，不影响后续打包（保持 MVP 原则）
+            pass
+
+    # 2) 内容类型清理：移除无效 Override
+    if CONTENT_TYPES.exists():
+        try:
+            root = ET.parse(str(CONTENT_TYPES)).getroot()
+            override_tag = '{http://schemas.openxmlformats.org/package/2006/content-types}Override'
+            present = {f'/{p.relative_to(TEMPLATE_DIR).as_posix()}' for p in TEMPLATE_DIR.rglob('*') if p.is_file()}
+            bad = []
+            for ov in list(root.findall(override_tag)):
+                part = ov.get('PartName') or ''
+                if part and part not in present:
+                    bad.append(ov)
+            for ov in bad:
+                root.remove(ov)
+                removed_ct += 1
+            if bad:
+                ET.ElementTree(root).write(str(CONTENT_TYPES), encoding='utf-8', xml_declaration=True)
+        except Exception:
+            pass
+
+    return removed_rels, removed_ct
+
+
 def _required_embeddings(charts_rels_dir: Path) -> Set[str]:
     required: Set[str] = set()
     if not charts_rels_dir.exists():
@@ -111,6 +176,10 @@ def _zip_template_dir(tpl_dir: Path, out_pptx: Path) -> None:
 def main() -> int:
     _log(f'[p{SLIDE_NO}] build_original start')
     _validate_template()
+    # 在打包前进行关系与内容类型清理，避免缺失 notes* 导致原始 PPTX 不可打开
+    rel_rm, ct_rm = _clean_slide1_rels_and_content_types()
+    if rel_rm or ct_rm:
+        _log(f'Cleaned invalid refs: slide1.rels removed={rel_rm}, [Content_Types] removed={ct_rm}')
     _zip_template_dir(TEMPLATE_DIR, OUT_PPTX)
     _log(f'[p{SLIDE_NO}] build_original done: {OUT_PPTX}')
     return 0
