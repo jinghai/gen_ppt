@@ -18,9 +18,10 @@ import openpyxl
 # 项目路径配置
 ROOT = Path(__file__).resolve().parent
 
-# 项目根目录（用于统一临时文件位置）
-PROJECT_ROOT = ROOT.parents[1]
-TMP_DIR = PROJECT_ROOT / 'tmp' / 'p29'
+# 页面级临时目录（遵循“页面级代码使用页面级 tmp”）
+# 说明：所有 P29 相关的临时文件均放置在 charts/p29/tmp 下，
+# 避免污染项目根目录并便于页面内自洽管理。
+TMP_DIR = ROOT / 'tmp'
 
 def load_config():
     """加载页面级配置文件"""
@@ -93,7 +94,7 @@ def update_chart_data_json(chart_data):
         'series': chart_data['bar_chart']['series']
     }
     
-    # 临时数据写入项目根 tmp 目录，遵循“临时文件统一到根/tmp”规则
+    # 临时数据写入页面级 tmp 目录，遵循“页面级 tmp”规则
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     
     # 可选：保存数据到临时文件用于调试
@@ -110,7 +111,7 @@ def extract_ppt_template():
     if not template_ppt.exists():
         raise FileNotFoundError(f"PPT模板不存在：{template_ppt}")
     
-    # 创建临时目录（项目根 tmp 下）
+    # 创建临时目录（页面级 tmp 下）
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     
     # 解压PPT
@@ -123,6 +124,67 @@ def extract_ppt_template():
     
     print(f"PPT模板已解压到：{extract_dir}")
     return extract_dir
+
+def reshape_excel_for_editing(excel_path, chart_data, config):
+    """
+    将 p29_data.xlsx 重塑为 PowerPoint“编辑数据”友好的布局：
+    - 新建/覆盖工作表 Sheet1：
+      第1行为系列名称（B1..），A列为分类标题“Channel”；
+      第2行起为各渠道（A2..A{N}），各品牌对应列为数值（B..）。
+    - 定义命名范围：Categories（A2:A{N}）、每个品牌的列范围（如 Lenovo -> B2:B{N}）。
+    这样在 PowerPoint 中点击“编辑数据”时结构清晰，并可与图表系列公式直接匹配。
+    """
+    labels = chart_data['bar_chart']['labels']
+    series_list = chart_data['bar_chart']['series']
+    brands_display = config['filters']['brands_display']
+
+    wb = openpyxl.load_workbook(excel_path)
+    # 若存在 Sheet1 则删除，避免遗留干扰
+    if 'Sheet1' in wb.sheetnames:
+        ws_old = wb['Sheet1']
+        wb.remove(ws_old)
+    ws = wb.create_sheet('Sheet1', 0)
+
+    # 写入表头
+    ws.cell(row=1, column=1, value='Channel')
+    for idx, brand in enumerate(brands_display, start=2):
+        ws.cell(row=1, column=idx, value=brand)
+
+    # 写入数据行：A 列为渠道，B.. 为各品牌值
+    for r_idx, ch in enumerate(labels, start=2):
+        ws.cell(row=r_idx, column=1, value=ch)
+        for c_idx, brand in enumerate(brands_display, start=2):
+            # 在 series_list 中找到该品牌的值序列
+            vals = None
+            for s in series_list:
+                if s['name'] == brand:
+                    vals = s['values']
+                    break
+            val = vals[r_idx - 2] if vals and len(vals) >= (r_idx - 1) else 0.0
+            ws.cell(row=r_idx, column=c_idx, value=float(val))
+
+    # 添加命名范围：Categories 与各品牌列范围
+    from openpyxl.workbook.defined_name import DefinedName
+    last_row = 1 + len(labels)
+    categories_ref = f"Sheet1!$A$2:$A${last_row}"
+    dn = DefinedName('Categories', categories_ref)
+    try:
+        wb.defined_names.append(dn)
+    except AttributeError:
+        # 兼容老版本 openpyxl 的 DefinedNameDict
+        wb.defined_names.add(dn)
+
+    for idx, brand in enumerate(brands_display, start=2):
+        col_letter = openpyxl.utils.get_column_letter(idx)
+        ref = f"Sheet1!${col_letter}$2:${col_letter}${last_row}"
+        try:
+            wb.defined_names.append(DefinedName(brand, ref))
+        except AttributeError:
+            wb.defined_names.add(DefinedName(brand, ref))
+
+    wb.save(excel_path)
+    print(f"已重塑编辑数据工作表：{excel_path} -> Sheet1（含命名范围）")
+    return excel_path
 
 def update_chart_xml_caches(extract_dir, chart_data):
     """
@@ -363,6 +425,121 @@ def update_embedded_excel_and_links(extract_dir, excel_path):
             except Exception as e:
                 print(f"设置 {chart_xml.name} 自动更新失败：{e}")
 
+def update_chart_series_formulas(extract_dir, chart_data, config):
+    """
+    将图表系列公式（c:ser -> c:cat/c:strRef/c:f、c:val/c:numRef/c:f、以及 c:tx/c:strRef/c:f）
+    指向我们在 Sheet1 中的标准布局：
+      - 分类：Sheet1!$A$2:$A${N}
+      - 每个系列值：Sheet1!$<COL>$2:$<COL>${N}
+      - 系列名：Sheet1!$<COL>$1
+    这样在 PowerPoint 中“编辑数据”与图表绑定一致，体验更友好。
+    """
+    charts_dir = extract_dir / 'ppt' / 'charts'
+    if not charts_dir.exists():
+        print('未找到 charts 目录，跳过系列公式更新')
+        return
+
+    ns = {'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'}
+    labels = chart_data['bar_chart']['labels']
+    brands_display = config['filters']['brands_display']
+    last_row = 1 + len(labels)
+
+    def col_for_brand(brand):
+        idx = brands_display.index(brand) if brand in brands_display else -1
+        if idx < 0:
+            return None
+        # B -> 2，C -> 3 ...
+        return openpyxl.utils.get_column_letter(idx + 2)
+
+    for chart_xml in charts_dir.glob('chart*.xml'):
+        try:
+            tree = etree.parse(str(chart_xml))
+            root = tree.getroot()
+            updated = False
+
+            # barChart 系列
+            for bar in root.findall('.//c:barChart', ns):
+                for ser in bar.findall('c:ser', ns):
+                    # 系列名文本，用来确定列
+                    brand_name = None
+                    tx_v = ser.find('.//c:tx//c:v', ns)
+                    if tx_v is not None and tx_v.text:
+                        brand_name = tx_v.text.strip()
+                    # 分类公式
+                    cat_f = ser.find('.//c:cat//c:strRef//c:f', ns)
+                    if cat_f is None:
+                        cat_f_parent = ser.find('.//c:cat//c:strRef', ns)
+                        if cat_f_parent is None:
+                            cat = ser.find('c:cat', ns)
+                            if cat is None:
+                                cat = etree.SubElement(ser, f"{{{ns['c']}}}cat")
+                            str_ref = etree.SubElement(cat, f"{{{ns['c']}}}strRef")
+                            cat_f_parent = str_ref
+                        cat_f = etree.SubElement(cat_f_parent, f"{{{ns['c']}}}f")
+                    cat_f.text = f"Sheet1!$A$2:$A${last_row}"
+
+                    # 数值公式
+                    col_letter = col_for_brand(brand_name) if brand_name else 'B'
+                    val_f = ser.find('.//c:val//c:numRef//c:f', ns)
+                    if val_f is None:
+                        val = ser.find('c:val', ns)
+                        if val is None:
+                            val = etree.SubElement(ser, f"{{{ns['c']}}}val")
+                        num_ref = val.find('c:numRef', ns)
+                        if num_ref is None:
+                            num_ref = etree.SubElement(val, f"{{{ns['c']}}}numRef")
+                        val_f = etree.SubElement(num_ref, f"{{{ns['c']}}}f")
+                    val_f.text = f"Sheet1!${col_letter}$2:${col_letter}${last_row}"
+
+                    # 系列名公式（指向表头单元格）
+                    tx_f = ser.find('.//c:tx//c:strRef//c:f', ns)
+                    if tx_f is None:
+                        tx = ser.find('c:tx', ns)
+                        if tx is None:
+                            tx = etree.SubElement(ser, f"{{{ns['c']}}}tx")
+                        str_ref = tx.find('c:strRef', ns)
+                        if str_ref is None:
+                            str_ref = etree.SubElement(tx, f"{{{ns['c']}}}strRef")
+                        tx_f = etree.SubElement(str_ref, f"{{{ns['c']}}}f")
+                    tx_col = col_for_brand(brand_name) if brand_name else 'B'
+                    tx_f.text = f"Sheet1!${tx_col}$1"
+                    updated = True
+
+            # 饼图系列（若存在则使用总 SOV）
+            for pie in root.findall('.//c:pieChart', ns):
+                ser = pie.find('c:ser', ns)
+                if ser is not None:
+                    cat_f = ser.find('.//c:cat//c:strRef//c:f', ns)
+                    if cat_f is None:
+                        cat = ser.find('c:cat', ns)
+                        if cat is None:
+                            cat = etree.SubElement(ser, f"{{{ns['c']}}}cat")
+                        str_ref = cat.find('c:strRef', ns)
+                        if str_ref is None:
+                            str_ref = etree.SubElement(cat, f"{{{ns['c']}}}strRef")
+                        cat_f = etree.SubElement(str_ref, f"{{{ns['c']}}}f")
+                    cat_f.text = f"Sheet1!$A$2:$A${last_row}"
+
+                    # 取第一个系列（Lenovo）示例，或按需要映射到总 SOV
+                    val_f = ser.find('.//c:val//c:numRef//c:f', ns)
+                    if val_f is None:
+                        val = ser.find('c:val', ns)
+                        if val is None:
+                            val = etree.SubElement(ser, f"{{{ns['c']}}}val")
+                        num_ref = val.find('c:numRef', ns)
+                        if num_ref is None:
+                            num_ref = etree.SubElement(val, f"{{{ns['c']}}}numRef")
+                        val_f = etree.SubElement(num_ref, f"{{{ns['c']}}}f")
+                    # 使用所有品牌之和不适用于饼图；此处保持默认或按需求外部数据定义
+                    # 这里不强行重写饼图数据来源，仅保证分类公式存在
+                    updated = True
+
+            if updated:
+                tree.write(str(chart_xml), xml_declaration=True, encoding='UTF-8', standalone='yes')
+                print(f"已更新系列公式：{chart_xml.name}")
+        except Exception as e:
+            print(f"更新系列公式时出错 {chart_xml.name}：{e}")
+
 def repack_ppt(extract_dir, output_path):
     """重新打包PPT文件"""
     print(f"正在重新打包PPT到：{output_path}")
@@ -417,9 +594,17 @@ def main():
         print("正在解压PPT模板...")
         extract_dir = extract_ppt_template()
 
+        # 将 Excel 重塑为“编辑数据”友好结构（含命名范围）
+        print("正在重塑 Excel 编辑数据结构...")
+        reshape_excel_for_editing(excel_path, chart_data, config)
+
         # 替换嵌入的工作簿并修正关系，启用自动更新
         print("正在替换嵌入工作簿并启用自动刷新...")
         update_embedded_excel_and_links(extract_dir, excel_path)
+
+        # 更新系列公式指向 Sheet1 的命名布局
+        print("正在更新图表系列公式绑定...")
+        update_chart_series_formulas(extract_dir, chart_data, config)
 
         # 刷新 chart XML 缓存，避免打开后显示旧数据（尽力而为，若模板不含缓存节点则跳过）
         print("正在刷新图表缓存数据...")
@@ -436,7 +621,7 @@ def main():
         print("  - 右侧：品牌总体声量份额饼图")
         print("  - 嵌入的Excel数据已更新，可在PowerPoint中编辑")
         
-        # 保留临时文件用于调试（项目根 tmp 下）
+        # 保留临时文件用于调试（页面级 tmp 下）
         if TMP_DIR.exists():
             print(f"临时文件已保留在：{TMP_DIR}")
             print("  - chart_data.json: 图表数据")
