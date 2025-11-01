@@ -10,8 +10,8 @@ update:
   end_date: "2025-08-31"                 # 截止日期（UTC，YYYY-MM-DD）
 
 data_sources:
-  neticle_db: ./input/neticle-v5-08.sqlite   # 舆情原始库（Neticle 数据）
-  metrics_db: ./input/metrics_v5-08.db       # 指标聚合库（预计算指标）
+  neticle_db: ./input/neticle-v4-08.sqlite   # 舆情原始库（Neticle 数据）
+  metrics_db: ./input/metrics-v4-08.db       # 指标聚合库（预计算指标）
 
 filters:
   countryId: 39                           # 国家 ID（France）
