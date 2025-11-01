@@ -20,6 +20,25 @@ filters:
   brands: ["lenovo","dell","hp","asus","acer","apple","samsung"]  # 分析范围（忽略大小写，与 mentions_wide.keyword_label 部分匹配）
   # 展示用名称顺序需与原图图例一致：Lenovo, Dell, Apple, HP, ASUS, Acer, Samsung
   brands_display: ["Lenovo","Dell","Apple","HP","ASUS","Acer","Samsung"]
+  # 品牌颜色（用于柱状图系列固定配色），十六进制 RGB 值
+  # 配色从上到下的堆叠顺序：
+  #  1) Lenovo:  红色 FF0000
+  #  2) Dell:    蓝色 4E5AFF
+  #  3) Apple:   灰色 BFBFBF
+  #  4) HP:      青色 00BCD4
+  #  5) ASUS:    粉色 E935A8
+  #  6) Acer:    绿色 2DBD6A
+  #  7) Samsung: 深蓝 142D5C
+  brand_colors:
+    Lenovo:  "FF0000"   # 来自模板：series #6
+    Dell:    "4E5AFF"   # 来自模板：series #5
+    Apple:   "BEBEBE"   # 来自模板：series #4（注意不是 BFBFBF）
+    HP:      "43A7D0"   # 来自模板：series #3（比 00BCD4 更偏浅蓝）
+    Asus:    "E935A8"   # 来自模板：series #2；兼容大小写与别名
+    Acer:    "0AA0A9"   # 来自模板：series #1（偏青绿）
+    Samsung: "142D5C"   # 来自模板：series #0（深蓝）
+  # 堆叠显示的“从上到下”顺序，用于数据与配色对齐（与 brands_display 一致）
+  brand_stack_top_to_bottom: ["Lenovo","Dell","Apple","HP","ASUS","Acer","Samsung"]
 
 # 渠道映射：将 sources.name 归并为目标渠道
 channels:

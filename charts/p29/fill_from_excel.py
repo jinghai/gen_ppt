@@ -162,9 +162,43 @@ def reshape_excel_for_editing(excel_path, chart_data, config):
         wb.remove(wb['Sheet1'])
     ws = wb.create_sheet('Sheet1', 0)
 
-    # 写入表头：B1.. 为品牌名
+    # 写入表头：B1.. 为品牌名，并按配置着色以便核对
+    color_map = (config.get('filters') or {}).get('brand_colors') or {}
+
+    # 选择与底色形成足够反差的文字颜色（黑/白），提升可读性
+    def pick_contrast_font(hex_color: str) -> str:
+        """
+        输入类似 'FF0000' 的 RGB 十六进制，输出 ARGB 字符串：
+        - 亮色背景用黑字 'FF000000'
+        - 暗色背景用白字 'FFFFFFFF'
+        简化策略遵循 W3C 相对亮度计算，避免过度设计。
+        """
+        if not hex_color:
+            return 'FF000000'
+        hc = hex_color.strip().lstrip('#').upper()
+        if len(hc) == 8:  # 允许 ARGB，取后 6 位
+            hc = hc[-6:]
+        try:
+            r = int(hc[0:2], 16) / 255.0
+            g = int(hc[2:4], 16) / 255.0
+            b = int(hc[4:6], 16) / 255.0
+        except Exception:
+            return 'FF000000'
+
+        def to_linear(c):
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+        L = 0.2126 * to_linear(r) + 0.7152 * to_linear(g) + 0.0722 * to_linear(b)
+        # 阈值 0.55 在深色蓝、青、红背景下能得到白字，在浅灰下得到黑字
+        return 'FFFFFFFF' if L < 0.55 else 'FF000000'
     for b_idx, brand in enumerate(brands_display, start=2):
         ws.cell(row=1, column=b_idx, value=brand)
+        # 统一底色：与柱状图系列颜色一致，便于人工比对
+        hex_color = color_map.get(brand) or color_map.get(brand.upper()) or color_map.get(brand.capitalize())
+        if hex_color:
+            from openpyxl.styles import PatternFill, Font
+            ws.cell(row=1, column=b_idx).fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type='solid')
+            ws.cell(row=1, column=b_idx).font = Font(color=pick_contrast_font(hex_color), bold=True)
 
     # 建立品牌 -> 值序列映射
     series_by_name = {s['name']: s['values'] for s in series_list}
@@ -176,6 +210,12 @@ def reshape_excel_for_editing(excel_path, chart_data, config):
             vals = series_by_name.get(brand, [])
             v = float(vals[r_idx - 2]) if len(vals) >= (r_idx - 1) else 0.0
             ws.cell(row=r_idx, column=b_idx, value=v)
+            # 数值单元格底色与该列品牌色一致
+            hex_color = color_map.get(brand) or color_map.get(brand.upper()) or color_map.get(brand.capitalize())
+            if hex_color:
+                from openpyxl.styles import PatternFill, Font
+                ws.cell(row=r_idx, column=b_idx).fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type='solid')
+                ws.cell(row=r_idx, column=b_idx).font = Font(color=pick_contrast_font(hex_color))
 
     wb.save(excel_path)
     print(f"已按模板重构 Sheet1：{excel_path}（行: {len(labels)+1}，列: {len(brands_display)+1}）")
@@ -198,6 +238,8 @@ def update_chart_xml_caches(extract_dir, chart_data):
 
     labels = chart_data['bar_chart']['labels']
     series_list = chart_data['bar_chart']['series']
+    # 使用 chart_data 序列顺序作为 Sheet1 表头（B..H）顺序的权威来源
+    brands_order = [s['name'] for s in series_list]
     series_by_name = {s['name']: s['values'] for s in series_list}
 
     pie_labels = chart_data['pie_chart']['labels']
@@ -241,8 +283,23 @@ def update_chart_xml_caches(extract_dir, chart_data):
             for bar in bar_charts:
                 # 更新每个系列的分类（cat）与数值（val）缓存
                 for s_idx, ser in enumerate(bar.findall('c:ser', ns)):
-                    # 读取系列名以匹配到正确数据
+                    # 读取系列名以匹配到正确数据（优先根据系列名公式的列字母推断品牌）
                     name_text = None
+                    brand_from_tx_f = None
+                    tx_f = ser.find('.//c:tx//c:strRef//c:f', ns)
+                    if tx_f is not None and tx_f.text and '!' in tx_f.text:
+                        # 形如 Sheet1!$D$1 -> 列 D
+                        try:
+                            addr = tx_f.text.split('!')[1]
+                            col_letter = addr.split('$')[1]
+                            # Sheet1 列从 B 开始映射到 brands_order[0]
+                            from openpyxl.utils import column_index_from_string
+                            col_idx_1 = column_index_from_string(col_letter)
+                            brand_idx = col_idx_1 - 2
+                            if 0 <= brand_idx < len(brands_order):
+                                brand_from_tx_f = brands_order[brand_idx]
+                        except Exception:
+                            brand_from_tx_f = None
                     tx = ser.find('.//c:tx', ns)
                     if tx is not None:
                         # 可能存在 strRef/strCache 或直接 c:v
@@ -267,16 +324,15 @@ def update_chart_xml_caches(extract_dir, chart_data):
                             cat_cache = etree.SubElement(str_ref, f"{{{ns['c']}}}strCache")
                     _write_str_cache(cat_cache, labels)
 
-                    # 数值缓存（垂直数据）—优先按系列名匹配，否则按序号匹配
+                    # 数值缓存（垂直数据）—优先用 tx_f 列字母推断的品牌，其次用现有 strCache 名，再次用出现顺序
                     values = None
-                    if name_text and name_text in series_by_name:
-                        values = series_by_name[name_text]
+                    target_brand = brand_from_tx_f or name_text
+                    if target_brand and target_brand in series_by_name:
+                        values = series_by_name[target_brand]
+                    elif 0 <= s_idx < len(series_list):
+                        values = series_list[s_idx]['values']
                     else:
-                        # 使用系列出现顺序索引，避免所有系列写入同一份数据
-                        if 0 <= s_idx < len(series_list):
-                            values = series_list[s_idx]['values']
-                        else:
-                            values = []
+                        values = []
 
                     num_cache = ser.find('.//c:val//c:numCache', ns)
                     if num_cache is None:
@@ -290,6 +346,21 @@ def update_chart_xml_caches(extract_dir, chart_data):
                         if num_cache is None:
                             num_cache = etree.SubElement(num_ref, f"{{{ns['c']}}}numCache")
                     _write_num_cache(num_cache, values)
+
+                    # 同步 tx 的 strCache 为目标品牌，避免后续基于 name_text 的逻辑错配
+                    if target_brand:
+                        tx_str_cache = ser.find('.//c:tx//c:strRef//c:strCache', ns)
+                        if tx_str_cache is None:
+                            tx = ser.find('c:tx', ns)
+                            if tx is None:
+                                tx = etree.SubElement(ser, f"{{{ns['c']}}}tx")
+                            str_ref = tx.find('c:strRef', ns)
+                            if str_ref is None:
+                                str_ref = etree.SubElement(tx, f"{{{ns['c']}}}strRef")
+                            tx_str_cache = str_ref.find('c:strCache', ns)
+                            if tx_str_cache is None:
+                                tx_str_cache = etree.SubElement(str_ref, f"{{{ns['c']}}}strCache")
+                        _write_str_cache(tx_str_cache, [target_brand])
                     updated = True
 
             # 更新饼图（pieChart）
@@ -440,6 +511,10 @@ def update_chart_series_formulas(extract_dir, chart_data, config):
     brands_display = config['filters']['brands_display']
     last_row = 1 + len(labels)
 
+    # 目标显示顺序（从上到下），为了匹配 WPS/PowerPoint 的“最后系列在最上”的渲染规则，
+    # 我们将 c:ser 的绑定列按反向顺序映射：ser[0] 绑定最底部品牌（Samsung），ser[最后] 绑定最顶部品牌（Lenovo）。
+    brands_for_series = list(reversed(brands_display))
+
     def col_for_brand(brand):
         idx = brands_display.index(brand) if brand in brands_display else -1
         if idx < 0:
@@ -483,8 +558,9 @@ def update_chart_series_formulas(extract_dir, chart_data, config):
                         cat_f = etree.SubElement(cat_f_parent, f"{{{ns['c']}}}f")
                     cat_f.text = f"Sheet1!$A$2:$A${last_row}"
 
-                    # 数值公式：优先按品牌映射列，缺失则按系列索引映射列
-                    col_letter = col_for_brand(brand_name) if brand_name and col_for_brand(brand_name) else col_for_index(s_idx)
+                    # 数值公式：按“从上到下”的反向品牌顺序绑定列，保证顶部 Lenovo、底部 Samsung
+                    target_brand = brands_for_series[s_idx] if s_idx < len(brands_for_series) else None
+                    col_letter = col_for_brand(target_brand) if target_brand and col_for_brand(target_brand) else col_for_index(s_idx)
                     val_f = ser.find('.//c:val//c:numRef//c:f', ns)
                     if val_f is None:
                         val = ser.find('c:val', ns)
@@ -506,8 +582,8 @@ def update_chart_series_formulas(extract_dir, chart_data, config):
                         if str_ref is None:
                             str_ref = etree.SubElement(tx, f"{{{ns['c']}}}strRef")
                         tx_f = etree.SubElement(str_ref, f"{{{ns['c']}}}f")
-                    tx_col = col_for_brand(brand_name) if brand_name and col_for_brand(brand_name) else col_letter
-                    tx_f.text = f"Sheet1!${tx_col}$1"
+                    # 系列名直接指向目标品牌所在的表头
+                    tx_f.text = f"Sheet1!${col_letter}$1"
                     updated = True
 
             # 饼图系列（若存在则使用总 SOV）
@@ -544,6 +620,158 @@ def update_chart_series_formulas(extract_dir, chart_data, config):
                 print(f"已更新系列公式：{chart_xml.name}")
         except Exception as e:
             print(f"更新系列公式时出错 {chart_xml.name}：{e}")
+
+def apply_brand_colors(extract_dir, config, excel_path):
+    """
+    为柱状图系列应用固定的品牌颜色映射，确保“颜色 ↔ 品牌 ↔ 数值列”一致。
+
+    颜色映射（从模板反取，满足“图3取色”）：
+      - Lenovo:  FF0000
+      - Dell:    4E5AFF
+      - Apple:   BEBEBE
+      - HP:      43A7D0
+      - ASUS:    E935A8
+      - Acer:    0AA0A9
+      - Samsung: 142D5C
+
+    说明：
+    - 覆盖所有 7 个品牌颜色；颜色读取优先使用配置 filters.brand_colors。
+    - 系列颜色按系列名公式解析到的 Excel 表头品牌应用，确保颜色与数值列一致。
+    - 使用 `a:solidFill/a:srgbClr@val` 直接设置 RGB，避免主题色偏移。
+    """
+
+    charts_dir = extract_dir / 'ppt' / 'charts'
+    if not charts_dir.exists():
+        print('未找到 charts 目录，跳过颜色应用')
+        return
+
+    ns = {
+        'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart',
+        'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+    }
+
+    brands_display = config['filters']['brands_display']
+    # 优先使用配置文件中的颜色映射（filters.brand_colors）
+    color_map = ((config.get('filters') or {}).get('brand_colors') or {
+        'Lenovo':  'FF0000',
+        'Dell':    '4E5AFF',
+        'Apple':   'BEBEBE',
+        'HP':      '43A7D0',
+        'ASUS':    'E935A8',
+        'Acer':    '0AA0A9',
+        'Samsung': '142D5C',
+    })
+
+    # 预读 Excel，建立列字母 -> 品牌名映射（例如 B -> Lenovo）
+    col_to_brand = {}
+    try:
+        wb = openpyxl.load_workbook(excel_path, data_only=True)
+        ws = wb['Sheet1']
+        col_index = 2
+        while True:
+            cell = ws.cell(row=1, column=col_index).value
+            if cell is None:
+                break
+            col_to_brand[openpyxl.utils.get_column_letter(col_index)] = str(cell)
+            col_index += 1
+    except Exception:
+        pass
+
+    for chart_xml in charts_dir.glob('chart*.xml'):
+        try:
+            tree = etree.parse(str(chart_xml))
+            root = tree.getroot()
+
+            changed = False
+            for bar in root.findall('.//c:barChart', ns):
+                for s_idx, ser in enumerate(bar.findall('c:ser', ns)):
+                    # 优先通过系列名公式解析列字母 -> Excel 表头的品牌名
+                    tx_f = ser.find('.//c:tx//c:strRef//c:f', ns)
+                    brand = None
+                    if tx_f is not None and tx_f.text:
+                        # 形如 Sheet1!$D$1
+                        try:
+                            addr = tx_f.text.split('!')[1]
+                            col_letter = addr.split('$')[1]
+                            brand = col_to_brand.get(col_letter)
+                        except Exception:
+                            brand = None
+                    # 回退：用 brands_display 的序号
+                    if not brand and s_idx < len(brands_display):
+                        brand = brands_display[s_idx]
+                    if not brand or brand not in color_map:
+                        continue
+
+                    # 获取/创建 spPr
+                    sppr = ser.find('c:spPr', ns)
+                    if sppr is None:
+                        sppr = etree.SubElement(ser, f"{{{ns['c']}}}spPr")
+
+                    # 清理现有填充设置
+                    for e in list(sppr):
+                        if e.tag in {f"{{{ns['a']}}}solidFill", f"{{{ns['a']}}}gradFill"}:
+                            sppr.remove(e)
+
+                    # 写入 solidFill srgbClr
+                    solid = etree.SubElement(sppr, f"{{{ns['a']}}}solidFill")
+                    srgb = etree.SubElement(solid, f"{{{ns['a']}}}srgbClr")
+                    srgb.set('val', str(color_map[brand]).upper())
+                    changed = True
+
+            if changed:
+                tree.write(str(chart_xml), xml_declaration=True, encoding='UTF-8', standalone='yes')
+                print(f"已应用品牌颜色：{chart_xml.name}")
+        except Exception as e:
+            print(f"应用品牌颜色失败 {chart_xml.name}：{e}")
+
+def remove_wps_chart_extensions(extract_dir):
+    """
+    移除 WPS 专用图表扩展（c:chart/c:extLst 下的 web.wps.cn/et 扩展），
+    目的：避免在 WPS/PowerPoint 中点击“编辑数据”时，WPS 扩展重新套用内部样式导致系列颜色被覆盖。
+
+    实现策略（MVP）：
+    - 仅删除 URI 为 "{0b15fc19-7d7d-44ad-8c2d-2c3a37ce22c3}" 的 c:ext 及其包含的 https://web.wps.cn/et/2018/main 命名空间节点。
+    - 若 extLst 清空，则连同父 extLst 一并移除。
+    - 保留其他 Office 扩展，避免破坏非相关功能。
+    """
+    charts_dir = extract_dir / 'ppt' / 'charts'
+    if not charts_dir.exists():
+        return
+
+    ns_c = 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+    wps_ns = 'https://web.wps.cn/et/2018/main'
+
+    for chart_xml in charts_dir.glob('chart*.xml'):
+        try:
+            tree = etree.parse(str(chart_xml))
+            root = tree.getroot()
+            chart = root.find(f'.//{{{ns_c}}}chart')
+            if chart is None:
+                continue
+            extLst = chart.find(f'{{{ns_c}}}extLst')
+            if extLst is None:
+                continue
+
+            changed = False
+            for ext in list(extLst):
+                uri = ext.get('uri')
+                # 匹配 WPS 扩展（GUID 或命名空间判断）
+                is_wps = (uri == '{0b15fc19-7d7d-44ad-8c2d-2c3a37ce22c3}') or any(
+                    child.tag.startswith(f'{{{wps_ns}}}') for child in ext
+                )
+                if is_wps:
+                    extLst.remove(ext)
+                    changed = True
+
+            # 若 extLst 无子节点则移除整个 extLst
+            if changed and len(list(extLst)) == 0:
+                chart.remove(extLst)
+
+            if changed:
+                tree.write(str(chart_xml), xml_declaration=True, encoding='UTF-8', standalone='yes')
+                print(f"已移除 WPS 扩展：{chart_xml.name}")
+        except Exception as e:
+            print(f"移除 WPS 扩展失败 {chart_xml.name}：{e}")
 
 def repack_ppt(extract_dir, output_path):
     """重新打包PPT文件"""
@@ -610,6 +838,14 @@ def main():
         # 更新系列公式指向 Sheet1 的命名布局
         print("正在更新图表系列公式绑定...")
         update_chart_series_formulas(extract_dir, chart_data, config)
+
+        # 应用品牌颜色映射，保证颜色与品牌和值一致
+        print("正在应用品牌颜色映射...")
+        apply_brand_colors(extract_dir, config, excel_path)
+
+        # 移除 WPS 图表扩展，防止“编辑数据”时颜色被重置
+        print("正在移除 WPS 图表扩展...")
+        remove_wps_chart_extensions(extract_dir)
 
         # 刷新 chart XML 缓存，避免打开后显示旧数据（尽力而为，若模板不含缓存节点则跳过）
         print("正在刷新图表缓存数据...")
