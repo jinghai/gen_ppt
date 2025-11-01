@@ -127,63 +127,58 @@ def extract_ppt_template():
 
 def reshape_excel_for_editing(excel_path, chart_data, config):
     """
-    将 p29_data.xlsx 重塑为 PowerPoint“编辑数据”友好的布局：
-    - 新建/覆盖工作表 Sheet1：
-      第1行为系列名称（B1..），A列为分类标题“Channel”；
-      第2行起为各渠道（A2..A{N}），各品牌对应列为数值（B..）。
-    - 定义命名范围：Categories（A2:A{N}）、每个品牌的列范围（如 Lenovo -> B2:B{N}）。
-    这样在 PowerPoint 中点击“编辑数据”时结构清晰，并可与图表系列公式直接匹配。
+    将 p29_data.xlsx 的 Sheet1 重塑为与 PPT 内嵌的 Workbook1.xlsb 模板一致的布局，
+    目标是让图表系列（品牌）与数据列严格对齐，避免所有系列引用同一列导致映射错误。
+
+    最终布局（Series in columns）：
+    - 第1行：B1.. 为品牌名（与图例顺序一致）；A1留空。
+    - 第2..N行：A列为渠道名称（分类标签），B.. 为各品牌在该渠道的数值。
+    - 这样分类公式指向 Sheet1!$A$2:$A${N}，每个系列值公式指向 Sheet1!$<COL>$2:$<COL>${N}。
+
+    实现说明：
+    - 若 charts/p29/tmp/ppt_extracted/ppt/embeddings/Workbook1.xlsb 存在，可读取以了解模板形状，但以我们标准布局为准。
+    - 品牌顺序严格按照 config.filters.brands_display（与图例顺序一致）。
+    - 遵循 MVP 原则，仅写入所需的文本与数值，不引入复杂命名范围或样式。
     """
     labels = chart_data['bar_chart']['labels']
     series_list = chart_data['bar_chart']['series']
     brands_display = config['filters']['brands_display']
 
+    # 1) 读取模板 xlsb 的列数（若可用）
+    template_xlsb = TMP_DIR / 'ppt_extracted' / 'ppt' / 'embeddings' / 'Workbook1.xlsb'
+    column_count = len(labels)  # 默认为渠道数
+    if template_xlsb.exists():
+        try:
+            # 用 pyxlsb 读取模板的 Sheet1 形状，取得列数
+            import pandas as pd
+            df = pd.read_excel(template_xlsb, sheet_name='Sheet1', engine='pyxlsb')
+            column_count = df.shape[1]
+        except Exception:
+            pass
+
+    # 2) 以“列为品牌、行为渠道”的方式重写 Sheet1
     wb = openpyxl.load_workbook(excel_path)
-    # 若存在 Sheet1 则删除，避免遗留干扰
     if 'Sheet1' in wb.sheetnames:
-        ws_old = wb['Sheet1']
-        wb.remove(ws_old)
+        wb.remove(wb['Sheet1'])
     ws = wb.create_sheet('Sheet1', 0)
 
-    # 写入表头
-    ws.cell(row=1, column=1, value='Channel')
-    for idx, brand in enumerate(brands_display, start=2):
-        ws.cell(row=1, column=idx, value=brand)
+    # 写入表头：B1.. 为品牌名
+    for b_idx, brand in enumerate(brands_display, start=2):
+        ws.cell(row=1, column=b_idx, value=brand)
 
-    # 写入数据行：A 列为渠道，B.. 为各品牌值
-    for r_idx, ch in enumerate(labels, start=2):
-        ws.cell(row=r_idx, column=1, value=ch)
-        for c_idx, brand in enumerate(brands_display, start=2):
-            # 在 series_list 中找到该品牌的值序列
-            vals = None
-            for s in series_list:
-                if s['name'] == brand:
-                    vals = s['values']
-                    break
-            val = vals[r_idx - 2] if vals and len(vals) >= (r_idx - 1) else 0.0
-            ws.cell(row=r_idx, column=c_idx, value=float(val))
+    # 建立品牌 -> 值序列映射
+    series_by_name = {s['name']: s['values'] for s in series_list}
 
-    # 添加命名范围：Categories 与各品牌列范围
-    from openpyxl.workbook.defined_name import DefinedName
-    last_row = 1 + len(labels)
-    categories_ref = f"Sheet1!$A$2:$A${last_row}"
-    dn = DefinedName('Categories', categories_ref)
-    try:
-        wb.defined_names.append(dn)
-    except AttributeError:
-        # 兼容老版本 openpyxl 的 DefinedNameDict
-        wb.defined_names.add(dn)
-
-    for idx, brand in enumerate(brands_display, start=2):
-        col_letter = openpyxl.utils.get_column_letter(idx)
-        ref = f"Sheet1!${col_letter}$2:${col_letter}${last_row}"
-        try:
-            wb.defined_names.append(DefinedName(brand, ref))
-        except AttributeError:
-            wb.defined_names.add(DefinedName(brand, ref))
+    # 写入分类与数值：A列为渠道名称；B.. 为各品牌对应值
+    for r_idx, channel in enumerate(labels, start=2):
+        ws.cell(row=r_idx, column=1, value=channel)
+        for b_idx, brand in enumerate(brands_display, start=2):
+            vals = series_by_name.get(brand, [])
+            v = float(vals[r_idx - 2]) if len(vals) >= (r_idx - 1) else 0.0
+            ws.cell(row=r_idx, column=b_idx, value=v)
 
     wb.save(excel_path)
-    print(f"已重塑编辑数据工作表：{excel_path} -> Sheet1（含命名范围）")
+    print(f"已按模板重构 Sheet1：{excel_path}（行: {len(labels)+1}，列: {len(brands_display)+1}）")
     return excel_path
 
 def update_chart_xml_caches(extract_dir, chart_data):
@@ -245,7 +240,7 @@ def update_chart_xml_caches(extract_dir, chart_data):
             updated = False
             for bar in bar_charts:
                 # 更新每个系列的分类（cat）与数值（val）缓存
-                for ser in bar.findall('c:ser', ns):
+                for s_idx, ser in enumerate(bar.findall('c:ser', ns)):
                     # 读取系列名以匹配到正确数据
                     name_text = None
                     tx = ser.find('.//c:tx', ns)
@@ -272,15 +267,16 @@ def update_chart_xml_caches(extract_dir, chart_data):
                             cat_cache = etree.SubElement(str_ref, f"{{{ns['c']}}}strCache")
                     _write_str_cache(cat_cache, labels)
 
-                    # 数值缓存（垂直数据）—按系列名匹配并写入
+                    # 数值缓存（垂直数据）—优先按系列名匹配，否则按序号匹配
                     values = None
                     if name_text and name_text in series_by_name:
                         values = series_by_name[name_text]
                     else:
-                        # 若无法通过名称匹配，则按出现顺序回退
-                        ser_idx = len(bar.findall('c:ser', ns))
-                        # 回退：按 series_list 顺序写入（不严谨，但保证不为空）
-                        values = series_list[0]['values'] if series_list else []
+                        # 使用系列出现顺序索引，避免所有系列写入同一份数据
+                        if 0 <= s_idx < len(series_list):
+                            values = series_list[s_idx]['values']
+                        else:
+                            values = []
 
                     num_cache = ser.find('.//c:val//c:numCache', ns)
                     if num_cache is None:
@@ -451,6 +447,10 @@ def update_chart_series_formulas(extract_dir, chart_data, config):
         # B -> 2，C -> 3 ...
         return openpyxl.utils.get_column_letter(idx + 2)
 
+    def col_for_index(s_idx):
+        # 序号 0 -> 列 B，1 -> 列 C ...
+        return openpyxl.utils.get_column_letter(2 + s_idx)
+
     for chart_xml in charts_dir.glob('chart*.xml'):
         try:
             tree = etree.parse(str(chart_xml))
@@ -459,12 +459,17 @@ def update_chart_series_formulas(extract_dir, chart_data, config):
 
             # barChart 系列
             for bar in root.findall('.//c:barChart', ns):
-                for ser in bar.findall('c:ser', ns):
+                for s_idx, ser in enumerate(bar.findall('c:ser', ns)):
                     # 系列名文本，用来确定列
                     brand_name = None
-                    tx_v = ser.find('.//c:tx//c:v', ns)
-                    if tx_v is not None and tx_v.text:
-                        brand_name = tx_v.text.strip()
+                    # 优先从 strCache 取值，其次回退到 c:v
+                    tx_cache_v = ser.find('.//c:tx//c:strCache//c:pt//c:v', ns)
+                    if tx_cache_v is not None and tx_cache_v.text:
+                        brand_name = tx_cache_v.text.strip()
+                    else:
+                        tx_v = ser.find('.//c:tx//c:v', ns)
+                        if tx_v is not None and tx_v.text:
+                            brand_name = tx_v.text.strip()
                     # 分类公式
                     cat_f = ser.find('.//c:cat//c:strRef//c:f', ns)
                     if cat_f is None:
@@ -478,8 +483,8 @@ def update_chart_series_formulas(extract_dir, chart_data, config):
                         cat_f = etree.SubElement(cat_f_parent, f"{{{ns['c']}}}f")
                     cat_f.text = f"Sheet1!$A$2:$A${last_row}"
 
-                    # 数值公式
-                    col_letter = col_for_brand(brand_name) if brand_name else 'B'
+                    # 数值公式：优先按品牌映射列，缺失则按系列索引映射列
+                    col_letter = col_for_brand(brand_name) if brand_name and col_for_brand(brand_name) else col_for_index(s_idx)
                     val_f = ser.find('.//c:val//c:numRef//c:f', ns)
                     if val_f is None:
                         val = ser.find('c:val', ns)
@@ -501,7 +506,7 @@ def update_chart_series_formulas(extract_dir, chart_data, config):
                         if str_ref is None:
                             str_ref = etree.SubElement(tx, f"{{{ns['c']}}}strRef")
                         tx_f = etree.SubElement(str_ref, f"{{{ns['c']}}}f")
-                    tx_col = col_for_brand(brand_name) if brand_name else 'B'
+                    tx_col = col_for_brand(brand_name) if brand_name and col_for_brand(brand_name) else col_letter
                     tx_f.text = f"Sheet1!${tx_col}$1"
                     updated = True
 
