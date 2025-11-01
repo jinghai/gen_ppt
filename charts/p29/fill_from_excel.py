@@ -18,6 +18,10 @@ import openpyxl
 # 项目路径配置
 ROOT = Path(__file__).resolve().parent
 
+# 项目根目录（用于统一临时文件位置）
+PROJECT_ROOT = ROOT.parents[1]
+TMP_DIR = PROJECT_ROOT / 'tmp' / 'p29'
+
 def load_config():
     """加载页面级配置文件"""
     config_path = ROOT / 'config.yaml'
@@ -89,12 +93,11 @@ def update_chart_data_json(chart_data):
         'series': chart_data['bar_chart']['series']
     }
     
-    # 创建临时目录保存数据（如果需要的话）
-    temp_dir = ROOT / 'tmp'
-    temp_dir.mkdir(exist_ok=True)
+    # 临时数据写入项目根 tmp 目录，遵循“临时文件统一到根/tmp”规则
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
     
     # 可选：保存数据到临时文件用于调试
-    temp_data_path = temp_dir / 'chart_data.json'
+    temp_data_path = TMP_DIR / 'chart_data.json'
     with open(temp_data_path, 'w', encoding='utf-8') as f:
         json.dump(bar_data, f, ensure_ascii=False, indent=2)
     
@@ -107,12 +110,11 @@ def extract_ppt_template():
     if not template_ppt.exists():
         raise FileNotFoundError(f"PPT模板不存在：{template_ppt}")
     
-    # 创建临时目录
-    temp_dir = ROOT / 'tmp'
-    temp_dir.mkdir(exist_ok=True)
+    # 创建临时目录（项目根 tmp 下）
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
     
     # 解压PPT
-    extract_dir = temp_dir / 'ppt_extracted'
+    extract_dir = TMP_DIR / 'ppt_extracted'
     if extract_dir.exists():
         shutil.rmtree(extract_dir)
     
@@ -122,88 +124,244 @@ def extract_ppt_template():
     print(f"PPT模板已解压到：{extract_dir}")
     return extract_dir
 
-def update_embedded_excel(extract_dir, chart_data):
-    """更新嵌入的Excel文件"""
-    # 查找嵌入的Excel文件
-    embeddings_dir = extract_dir / 'ppt' / 'embeddings'
-    if not embeddings_dir.exists():
-        print("警告：未找到embeddings目录")
+def update_chart_xml_caches(extract_dir, chart_data):
+    """
+    刷新 PPT 中 chart*.xml 的缓存数据（numCache/strCache），避免打开后仍显示旧数据。
+    不修改嵌入工作簿与关系，保证“可编辑”能力仍在，需要时 PowerPoint 可继续引用嵌入数据。
+    """
+    charts_dir = extract_dir / 'ppt' / 'charts'
+    if not charts_dir.exists():
+        print("警告：未找到 charts 目录，无法更新缓存")
         return
-    
-    # 查找.xlsb或.xlsx文件
-    excel_files = list(embeddings_dir.glob('*.xlsx')) + list(embeddings_dir.glob('*.xlsb'))
-    if not excel_files:
-        print("警告：未找到嵌入的Excel文件")
-        return
-    
-    # 使用第一个Excel文件
-    original_excel_file = excel_files[0]
-    print(f"找到嵌入的Excel文件：{original_excel_file}")
-    
-    # 如果是.xlsb文件，我们需要创建一个新的.xlsx文件来替换它
-    if original_excel_file.suffix.lower() == '.xlsb':
-        new_excel_file = embeddings_dir / 'Workbook1.xlsx'
-        print(f"将.xlsb文件替换为.xlsx文件：{new_excel_file}")
-        
-        # 更新关系文件中的引用
-        chart_rels_file = extract_dir / 'ppt' / 'charts' / '_rels' / 'chart1.xml.rels'
-        if chart_rels_file.exists():
-            with open(chart_rels_file, 'r', encoding='utf-8') as f:
-                rels_content = f.read()
-            
-            # 替换.xlsb为.xlsx
-            rels_content = rels_content.replace('Workbook1.xlsb', 'Workbook1.xlsx')
-            
-            with open(chart_rels_file, 'w', encoding='utf-8') as f:
-                f.write(rels_content)
-            print("已更新图表关系文件中的引用")
-        
-        # 删除原始.xlsb文件
-        original_excel_file.unlink()
-        excel_file = new_excel_file
+
+    ns = {
+        'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart',
+        'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+    }
+
+    labels = chart_data['bar_chart']['labels']
+    series_list = chart_data['bar_chart']['series']
+    series_by_name = {s['name']: s['values'] for s in series_list}
+
+    pie_labels = chart_data['pie_chart']['labels']
+    pie_values = chart_data['pie_chart']['values']
+
+    def _write_str_cache(cache_el, values):
+        # 清空并写入 strCache
+        for e in list(cache_el):
+            cache_el.remove(e)
+        pt_count = etree.SubElement(cache_el, f"{{{ns['c']}}}ptCount")
+        pt_count.set('val', str(len(values)))
+        for idx, v in enumerate(values):
+            pt = etree.SubElement(cache_el, f"{{{ns['c']}}}pt")
+            pt.set('idx', str(idx))
+            v_el = etree.SubElement(pt, f"{{{ns['c']}}}v")
+            v_el.text = str(v)
+
+    def _write_num_cache(cache_el, numbers):
+        # 清空并写入 numCache
+        for e in list(cache_el):
+            cache_el.remove(e)
+        pt_count = etree.SubElement(cache_el, f"{{{ns['c']}}}ptCount")
+        pt_count.set('val', str(len(numbers)))
+        for idx, num in enumerate(numbers):
+            pt = etree.SubElement(cache_el, f"{{{ns['c']}}}pt")
+            pt.set('idx', str(idx))
+            v_el = etree.SubElement(pt, f"{{{ns['c']}}}v")
+            # 保留 1 位小数，与 Excel 输出一致
+            v_el.text = f"{float(num):.1f}"
+
+    updated_files = []
+
+    for chart_xml in charts_dir.glob('chart*.xml'):
+        try:
+            tree = etree.parse(str(chart_xml))
+            root = tree.getroot()
+
+            # 更新堆叠柱状图（barChart）
+            bar_charts = root.findall('.//c:barChart', ns)
+            updated = False
+            for bar in bar_charts:
+                # 更新每个系列的分类（cat）与数值（val）缓存
+                for ser in bar.findall('c:ser', ns):
+                    # 读取系列名以匹配到正确数据
+                    name_text = None
+                    tx = ser.find('.//c:tx', ns)
+                    if tx is not None:
+                        # 可能存在 strRef/strCache 或直接 c:v
+                        name_el = tx.find('.//c:strCache/c:pt/c:v', ns)
+                        if name_el is None:
+                            name_el = tx.find('.//c:v', ns)
+                        if name_el is not None and name_el.text:
+                            name_text = name_el.text.strip()
+
+                    # 分类缓存（横轴标签）—写入统一的 labels
+                    cat_cache = ser.find('.//c:cat//c:strCache', ns)
+                    if cat_cache is None:
+                        # 若不存在则创建结构 c:cat/c:strRef/c:strCache
+                        cat = ser.find('.//c:cat', ns)
+                        if cat is None:
+                            cat = etree.SubElement(ser, f"{{{ns['c']}}}cat")
+                        str_ref = cat.find('c:strRef', ns)
+                        if str_ref is None:
+                            str_ref = etree.SubElement(cat, f"{{{ns['c']}}}strRef")
+                        cat_cache = str_ref.find('c:strCache', ns)
+                        if cat_cache is None:
+                            cat_cache = etree.SubElement(str_ref, f"{{{ns['c']}}}strCache")
+                    _write_str_cache(cat_cache, labels)
+
+                    # 数值缓存（垂直数据）—按系列名匹配并写入
+                    values = None
+                    if name_text and name_text in series_by_name:
+                        values = series_by_name[name_text]
+                    else:
+                        # 若无法通过名称匹配，则按出现顺序回退
+                        ser_idx = len(bar.findall('c:ser', ns))
+                        # 回退：按 series_list 顺序写入（不严谨，但保证不为空）
+                        values = series_list[0]['values'] if series_list else []
+
+                    num_cache = ser.find('.//c:val//c:numCache', ns)
+                    if num_cache is None:
+                        val = ser.find('.//c:val', ns)
+                        if val is None:
+                            val = etree.SubElement(ser, f"{{{ns['c']}}}val")
+                        num_ref = val.find('c:numRef', ns)
+                        if num_ref is None:
+                            num_ref = etree.SubElement(val, f"{{{ns['c']}}}numRef")
+                        num_cache = num_ref.find('c:numCache', ns)
+                        if num_cache is None:
+                            num_cache = etree.SubElement(num_ref, f"{{{ns['c']}}}numCache")
+                    _write_num_cache(num_cache, values)
+                    updated = True
+
+            # 更新饼图（pieChart）
+            pie_charts = root.findall('.//c:pieChart', ns)
+            for pie in pie_charts:
+                ser = pie.find('c:ser', ns)
+                if ser is not None:
+                    cat_cache = ser.find('.//c:cat//c:strCache', ns)
+                    if cat_cache is None:
+                        cat = ser.find('.//c:cat', ns)
+                        if cat is None:
+                            cat = etree.SubElement(ser, f"{{{ns['c']}}}cat")
+                        str_ref = cat.find('c:strRef', ns)
+                        if str_ref is None:
+                            str_ref = etree.SubElement(cat, f"{{{ns['c']}}}strRef")
+                        cat_cache = str_ref.find('c:strCache', ns)
+                        if cat_cache is None:
+                            cat_cache = etree.SubElement(str_ref, f"{{{ns['c']}}}strCache")
+                    _write_str_cache(cat_cache, pie_labels)
+
+                    num_cache = ser.find('.//c:val//c:numCache', ns)
+                    if num_cache is None:
+                        val = ser.find('.//c:val', ns)
+                        if val is None:
+                            val = etree.SubElement(ser, f"{{{ns['c']}}}val")
+                        num_ref = val.find('c:numRef', ns)
+                        if num_ref is None:
+                            num_ref = etree.SubElement(val, f"{{{ns['c']}}}numRef")
+                        num_cache = num_ref.find('c:numCache', ns)
+                        if num_cache is None:
+                            num_cache = etree.SubElement(num_ref, f"{{{ns['c']}}}numCache")
+                    _write_num_cache(num_cache, pie_values)
+                    updated = True
+
+            if updated:
+                tree.write(str(chart_xml), xml_declaration=True, encoding='UTF-8', standalone='yes')
+                updated_files.append(chart_xml.name)
+
+        except Exception as e:
+            print(f"更新 {chart_xml.name} 时出错：{e}")
+
+    # 启用 externalData 的自动更新，打开即刷新
+    chart_rels_dir = extract_dir / 'ppt' / 'charts' / '_rels'
+    for rel_file in chart_rels_dir.glob('chart*.xml.rels'):
+        try:
+            rel_tree = etree.parse(str(rel_file))
+            rel_root = rel_tree.getroot()
+            # 保持 rId1 指向嵌入工作簿，后续可能改为 xlsx
+            # 无需改 Id，只需要确保 Target 正确
+            rel_tree.write(str(rel_file), xml_declaration=True, encoding='UTF-8', standalone='yes')
+        except Exception:
+            pass
+
+    if updated_files:
+        print("已刷新以下图表缓存：")
+        for name in updated_files:
+            print(f"  - {name}")
     else:
-        excel_file = original_excel_file
-    
+        print("未发现可更新的图表缓存（可能模板未包含 bar/pie 图表）")
+
+def update_embedded_excel_and_links(extract_dir, excel_path):
+    """
+    用最新的 p29_data.xlsx 替换嵌入工作簿，并把关系的 Target 指向 .xlsx；
+    同时将 chart XML 的 externalData 自动更新开关设为 1。
+    """
+    embeddings_dir = extract_dir / 'ppt' / 'embeddings'
+    charts_rels_dir = extract_dir / 'ppt' / 'charts' / '_rels'
+    content_types_path = extract_dir / '[Content_Types].xml'
+
+    if not embeddings_dir.exists():
+        print("警告：未找到 embeddings 目录，无法替换嵌入工作簿")
+        return
+
+    # 将最新 Excel 复制为 .xlsx，供图表外部数据引用
+    target_xlsx = embeddings_dir / 'Workbook1.xlsx'
+    shutil.copy2(excel_path, target_xlsx)
+
+    # 如存在旧的 .xlsb，保留以防其他对象引用，但关系将切换到 .xlsx
+    old_xlsb = embeddings_dir / 'Workbook1.xlsb'
+    if not old_xlsb.exists():
+        print("提示：模板未包含 Workbook1.xlsb，直接使用 .xlsx")
+
+    # 更新图表关系，指向 .xlsx
+    if charts_rels_dir.exists():
+        for rel_file in charts_rels_dir.glob('chart*.xml.rels'):
+            try:
+                tree = etree.parse(str(rel_file))
+                root = tree.getroot()
+                for rel in root.findall('.//{http://schemas.openxmlformats.org/package/2006/relationships}Relationship'):
+                    target = rel.get('Target')
+                    if target and target.endswith('Workbook1.xlsb'):
+                        rel.set('Target', '../embeddings/Workbook1.xlsx')
+                tree.write(str(rel_file), xml_declaration=True, encoding='UTF-8', standalone='yes')
+            except Exception as e:
+                print(f"更新关系文件 {rel_file.name} 失败：{e}")
+
+    # 更新 Content_Types，添加 .xlsx 默认类型
     try:
-        # 创建新的Excel工作簿
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = 'Sheet1'
-        
-        # 写入新的堆叠柱状图数据
-        channels = chart_data['bar_chart']['labels']
-        series_data = chart_data['bar_chart']['series']
-        
-        # 写入表头：第一列是渠道，其余列是品牌
-        ws.cell(row=1, column=1, value='Channel')
-        for col_idx, series in enumerate(series_data):
-            ws.cell(row=1, column=col_idx + 2, value=series['name'])
-        
-        # 写入数据
-        for row_idx, channel in enumerate(channels):
-            ws.cell(row=row_idx + 2, column=1, value=channel)
-            
-            for col_idx, series in enumerate(series_data):
-                value = series['values'][row_idx]
-                ws.cell(row=row_idx + 2, column=col_idx + 2, value=value)
-        
-        # 保存Excel文件
-        wb.save(excel_file)
-        print(f"已更新嵌入的Excel文件：{excel_file}")
-        
-        # 显示更新后的数据预览
-        print("更新后的数据预览：")
-        print(f"渠道数量: {len(channels)}")
-        print(f"品牌数量: {len(series_data)}")
-        print("前几行数据：")
-        for i, channel in enumerate(channels[:3]):
-            row_data = [channel] + [series['values'][i] for series in series_data]
-            print(f"  {row_data}")
-        
+        ct = etree.parse(str(content_types_path))
+        ct_root = ct.getroot()
+        has_xlsx = False
+        for d in ct_root.findall('{http://schemas.openxmlformats.org/package/2006/content-types}Default'):
+            if d.get('Extension') == 'xlsx':
+                has_xlsx = True
+                break
+        if not has_xlsx:
+            new_def = etree.SubElement(ct_root, '{http://schemas.openxmlformats.org/package/2006/content-types}Default')
+            new_def.set('Extension', 'xlsx')
+            new_def.set('ContentType', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        ct.write(str(content_types_path), xml_declaration=True, encoding='UTF-8', standalone='yes')
     except Exception as e:
-        print(f"更新嵌入Excel文件时出错：{e}")
-        import traceback
-        traceback.print_exc()
+        print(f"更新 Content_Types 失败：{e}")
+
+    # 设置 chart XML 的 externalData autoUpdate=1，让打开 PPT 自动刷新数据
+    charts_dir = extract_dir / 'ppt' / 'charts'
+    if charts_dir.exists():
+        for chart_xml in charts_dir.glob('chart*.xml'):
+            try:
+                tree = etree.parse(str(chart_xml))
+                root = tree.getroot()
+                # 查找 externalData 节点
+                ext_data = root.find('.//{http://schemas.openxmlformats.org/drawingml/2006/chart}externalData')
+                if ext_data is not None:
+                    auto = ext_data.find('{http://schemas.openxmlformats.org/drawingml/2006/chart}autoUpdate')
+                    if auto is None:
+                        auto = etree.SubElement(ext_data, '{http://schemas.openxmlformats.org/drawingml/2006/chart}autoUpdate')
+                    auto.set('val', '1')
+                    tree.write(str(chart_xml), xml_declaration=True, encoding='UTF-8', standalone='yes')
+            except Exception as e:
+                print(f"设置 {chart_xml.name} 自动更新失败：{e}")
 
 def repack_ppt(extract_dir, output_path):
     """重新打包PPT文件"""
@@ -258,10 +416,14 @@ def main():
         # 解压PPT模板
         print("正在解压PPT模板...")
         extract_dir = extract_ppt_template()
-        
-        # 更新嵌入的Excel文件
-        print("正在更新嵌入的Excel数据...")
-        update_embedded_excel(extract_dir, chart_data)
+
+        # 替换嵌入的工作簿并修正关系，启用自动更新
+        print("正在替换嵌入工作簿并启用自动刷新...")
+        update_embedded_excel_and_links(extract_dir, excel_path)
+
+        # 刷新 chart XML 缓存，避免打开后显示旧数据（尽力而为，若模板不含缓存节点则跳过）
+        print("正在刷新图表缓存数据...")
+        update_chart_xml_caches(extract_dir, chart_data)
         
         # 重新打包PPT
         output_dir = ROOT / 'output'
@@ -274,10 +436,9 @@ def main():
         print("  - 右侧：品牌总体声量份额饼图")
         print("  - 嵌入的Excel数据已更新，可在PowerPoint中编辑")
         
-        # 保留临时文件用于调试
-        temp_dir = ROOT / 'tmp'
-        if temp_dir.exists():
-            print(f"临时文件已保留在：{temp_dir}")
+        # 保留临时文件用于调试（项目根 tmp 下）
+        if TMP_DIR.exists():
+            print(f"临时文件已保留在：{TMP_DIR}")
             print("  - chart_data.json: 图表数据")
             print("  - ppt_extracted/: 解压的PPT内容")
         

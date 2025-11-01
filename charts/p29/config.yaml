@@ -18,7 +18,8 @@ filters:
   brand_key: "Lenovo"                     # 品牌英文键（与数据源一致）
   brand_alias: ["Lenovo", "联想"]         # 品牌别名，用于模糊匹配/展示
   brands: ["lenovo","dell","hp","asus","acer","apple","samsung"]  # 分析范围（忽略大小写，与 mentions_wide.keyword_label 部分匹配）
-  brands_display: ["Lenovo","Dell","HP","ASUS","Acer","Apple","Samsung"]  # 展示用名称顺序
+  # 展示用名称顺序需与原图图例一致：Lenovo, Dell, Apple, HP, ASUS, Acer, Samsung
+  brands_display: ["Lenovo","Dell","Apple","HP","ASUS","Acer","Samsung"]
 
 # 渠道映射：将 sources.name 归并为目标渠道
 channels:
@@ -58,7 +59,8 @@ fill_policy:
   axis_day_base: 20300                    # 日期轴基准（Excel 日期序列起点偏移）
   dedup: mention_id                       # 去重依据（唯一标识）
   sentiment_labels: [Positive, Neutral, Negative]  # 情感标签顺序（统一口径）
-  channel_order: ["Online News", "Forum", "Blog", "X", "Instagram", "YouTube"]  # 渠道排序（输出一致性）
+  # 渠道排序需与原图横轴一致：Forum, Online News, Blog, X, Instagram, YouTube
+  channel_order: ["Forum", "Online News", "Blog", "X", "Instagram", "YouTube"]
 
 # 输出配置
 output:

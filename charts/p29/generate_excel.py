@@ -45,6 +45,10 @@ def extract_channel_data(config):
     start_date = config['update']['start_date']
     end_date = config['update']['end_date']
     brands = config['filters']['brands']
+    # 使用配置中的展示名做标准化映射，确保后续聚合与展示一致
+    brands_display = config['filters']['brands_display']
+    # 构建品牌归一化映射：如 'hp' -> 'HP', 'asus' -> 'ASUS'
+    brand_norm_map = {b.lower(): d for b, d in zip(brands, brands_display)}
     channel_mapping = config['channels']
     
     # 时间范围转换
@@ -85,12 +89,13 @@ def extract_channel_data(config):
         source_name = row['sourceName'].lower() if row['sourceName'] else ''
         channel = source_to_channel.get(source_name, 'Other')
         
-        # 提取品牌名称（去掉后缀）
+        # 提取并归一化品牌名称
         keyword_label = row['keyword_label']
         brand = None
         for b in brands:
             if keyword_label and b.lower() in keyword_label.lower():
-                brand = b.capitalize()
+                # 使用映射后的展示名，避免大小写不一致造成聚合漏算
+                brand = brand_norm_map.get(b.lower(), b.title())
                 break
         
         if brand and channel != 'Other':
