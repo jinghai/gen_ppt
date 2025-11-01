@@ -1,0 +1,40 @@
+2025-11-01 20:34:24,861 - INFO - === P13 填充开始 ===
+2025-11-01 20:34:24,867 - INFO - 模板已解压: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted
+2025-11-01 20:34:24,926 - INFO - Excel 加载成功: Pie=3 行, Line=31 行
+2025-11-01 20:34:24,933 - INFO - 嵌入式工作簿已写入: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx
+2025-11-01 20:34:24,933 - WARNING - 缺少关系文件: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/_rels/chart10.xml.rels
+2025-11-01 20:34:24,933 - WARNING - 缺少关系文件: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/_rels/chart11.xml.rels
+2025-11-01 20:34:24,934 - INFO - Content_Types.xml 已更新
+2025-11-01 20:34:24,934 - WARNING - 缺少图表文件: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/chart10.xml
+2025-11-01 20:34:24,934 - WARNING - 缺少图表文件: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/chart11.xml
+2025-11-01 20:34:24,943 - INFO - 已生成: /Users/jinghai/coder/gen_ppt/charts/p13/output/p13-final.pptx
+2025-11-01 20:35:52,067 - INFO - === P13 填充开始 ===
+2025-11-01 20:35:52,078 - INFO - 模板已解压: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted
+2025-11-01 20:35:52,131 - INFO - Excel 加载成功: Pie=3 行, Line=31 行
+2025-11-01 20:35:52,137 - INFO - 嵌入式工作簿已写入: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx
+2025-11-01 20:35:52,138 - INFO - 更新关系: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/_rels/chart1.xml.rels -> ../embeddings/Microsoft_Excel_Worksheet1.xlsx
+2025-11-01 20:35:52,138 - INFO - 更新关系: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/_rels/chart2.xml.rels -> ../embeddings/Microsoft_Excel_Worksheet1.xlsx
+2025-11-01 20:35:52,138 - INFO - Content_Types.xml 已更新
+2025-11-01 20:35:52,140 - INFO - 饼图 XML 已更新: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/chart1.xml
+2025-11-01 20:35:52,141 - INFO - 散点图 XML 已更新: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/chart2.xml
+2025-11-01 20:35:52,149 - INFO - 已生成: /Users/jinghai/coder/gen_ppt/charts/p13/output/p13-final.pptx
+2025-11-01 20:52:50,236 - INFO - === P13 填充开始 ===
+2025-11-01 20:52:50,247 - INFO - 模板已解压: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted
+2025-11-01 20:52:50,304 - INFO - Excel 加载成功: Pie=3 行, Line=31 行
+2025-11-01 20:52:50,311 - INFO - 嵌入式工作簿已写入: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx
+2025-11-01 20:52:50,312 - INFO - 更新关系: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/_rels/chart1.xml.rels -> ../embeddings/Microsoft_Excel_Worksheet1.xlsx
+2025-11-01 20:52:50,312 - INFO - 更新关系: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/_rels/chart2.xml.rels -> ../embeddings/Microsoft_Excel_Worksheet1.xlsx
+2025-11-01 20:52:50,312 - INFO - Content_Types.xml 已更新
+2025-11-01 20:52:50,313 - INFO - 饼图 XML 已更新: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/chart1.xml
+2025-11-01 20:52:50,315 - INFO - 散点图 XML 已更新: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/chart2.xml
+2025-11-01 20:52:50,324 - INFO - 已生成: /Users/jinghai/coder/gen_ppt/charts/p13/output/p13-final.pptx
+2025-11-01 20:53:21,745 - INFO - === P13 填充开始 ===
+2025-11-01 20:53:21,756 - INFO - 模板已解压: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted
+2025-11-01 20:53:21,809 - INFO - Excel 加载成功: Pie=3 行, Line=31 行
+2025-11-01 20:53:21,815 - INFO - 嵌入式工作簿已写入: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx
+2025-11-01 20:53:21,815 - INFO - 更新关系: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/_rels/chart1.xml.rels -> ../embeddings/Microsoft_Excel_Worksheet1.xlsx
+2025-11-01 20:53:21,815 - INFO - 更新关系: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/_rels/chart2.xml.rels -> ../embeddings/Microsoft_Excel_Worksheet1.xlsx
+2025-11-01 20:53:21,816 - INFO - Content_Types.xml 已更新
+2025-11-01 20:53:21,816 - INFO - 饼图 XML 已更新: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/chart1.xml
+2025-11-01 20:53:21,818 - INFO - 散点图 XML 已更新: /Users/jinghai/coder/gen_ppt/charts/p13/tmp/ppt_extracted/ppt/charts/chart2.xml
+2025-11-01 20:53:21,826 - INFO - 已生成: /Users/jinghai/coder/gen_ppt/charts/p13/output/p13-final.pptx

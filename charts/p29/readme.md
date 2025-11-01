@@ -26,13 +26,20 @@ P29页面展示联想法国市场在各媒体渠道的声量份额分析，包�
   - 国家: 法国 (countryId = 39)
   - 时间: 2025年8月 (start_date: 2025-07-31 22:00:00, end_date: 2025-08-31 21:59:08)
   - 品牌: Lenovo, Dell, HP, ASUS, Acer, Apple, Samsung
-- **输出**: `p29_data.xlsx` (包含原始数据、渠道SOV数据、品牌总体SOV三个工作表)
+- **输出**: `p29_data.xlsx` (包含4个工作表：Sheet1、渠道SOV数据、品牌总体SOV、原始统计)
 
 ### 2. PPT生成 (`fill_from_excel.py`)
 **功能**: 基于Excel数据和PPT模板生成最终演示文稿
 - **输入**: `p29_data.xlsx` + `p29.pptx`模板
-- **处理**: 更新图表数据、嵌入Excel数据源
+- **处理**: 更新图表数据、嵌入Excel数据源、应用Excel样式增强
 - **输出**: `p29-final.pptx` (可在PowerPoint中编辑的最终文件)
+
+#### Excel样式增强功能
+- **字体颜色自动对比**: 根据背景色亮度自动选择黑色或白色字体，确保可读性
+  - 使用W3C亮度计算公式: `(R*299 + G*587 + B*114) / 1000`
+  - 亮度 > 128 使用黑色字体，否则使用白色字体
+- **品牌底色映射**: 单元格背景色与config.yaml中的brand_colors配置保持一致
+- **字体加粗**: 重要数据使用加粗字体突出显示
 
 ## 渠道映射规则
 
@@ -103,13 +110,18 @@ python fill_from_excel.py
 - 输出: `p29-final.pptx` (可在PowerPoint中编辑)
 
 ### 输出文件
-- **Excel数据文件**: `p29_data.xlsx` - 包含原始数据、渠道SOV数据和品牌总体SOV
+- **Excel数据文件**: `p29_data.xlsx` - 包含4个工作表（Sheet1、渠道SOV数据、品牌总体SOV、原始统计）
+  - **Sheet1**: 主要数据展示，包含品牌颜色映射和字体对比优化
+  - **渠道SOV数据**: 各渠道内品牌声量份额数据
+  - **品牌总体SOV**: 品牌整体声量份额数据  
+  - **原始统计**: 原始提及数统计数据
 - **最终PPT文件**: `output/p29-final.pptx` - 包含左右两个图表的完整PPT
 
 ### 数据验证
 - **原始数据**: 44条记录 (各渠道各品牌的提及数)
 - **渠道SOV数据**: 42条记录 (6个渠道 × 7个品牌)
 - **品牌总体SOV**: 7条记录 (7个品牌的总体占比)
+- **Excel样式**: 自动应用品牌颜色和字体对比优化
 
 ### 注意事项
 - 模板文件 `template/p29.pptx` 不可修改
@@ -145,6 +157,7 @@ brand_sov = (brand_total_mentions / all_brands_total_mentions) * 100
 - 使用python-pptx库更新图表数据
 - 保持原始PPT格式和样式
 - 支持PowerPoint原生编辑功能
+- Excel数据源包含品牌颜色映射和字体优化
 
 ## 与多图表页面的对比
 

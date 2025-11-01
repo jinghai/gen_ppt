@@ -1,9 +1,100 @@
+project:
+  name: P13-Engagement-Breakdown
+  page: p13
+  description: 法国市场分析-Engagement breakdown（月度情绪分布 + 日趋势）
+  template_file: p13.pptx
+  output_dir: output
+  tmp_dir: tmp
+
+data_sources:
+  neticle_db: ../../input/neticle-v4-08.sqlite
+  metrics_db: ../../input/metrics-v4-08.db
+  neticle_schemas_doc: ../../input/neticle-schemas.md
+  metrics_schemas_doc: ../../input/metrics-schemas.md
+
+time_range:
+  start_date: 2025-08-01
+  end_date: 2025-08-31
+
+filters:
+  country_id: 39
+  country_name: France
+  brand_key: Lenovo
+  keyword_like: "%lenovo%"
+
+sentiment:
+  labels:
+    - Positive
+    - Neutral
+    - Negative
+  thresholds:
+    positive_min: 0.05
+    negative_max: -0.05
+  colors:
+    Positive: "#00B8A9"
+    Neutral: "#FEC84D"
+    Negative: "#D81159"
+
+charts:
+  pie:
+    chart_file: chart1.xml
+    sheet_name: PieData
+    label_column: Sentiment
+    value_column: Percentage
+  line:
+    chart_file: chart2.xml
+    sheet_name: LineData
+    date_column: Date
+    positive_column: Positive
+    neutral_column: Neutral
+    negative_column: Negative
+
+engagement:
+  fields_candidates:
+    - likesCount
+    - sharesCount
+    - commentsCount
+    - reactionsCount
+    - retweetsCount
+    - fb_likesCount
+    - fb_sharesCount
+    - fb_commentsCount
+    - ig_likesCount
+    - ig_commentsCount
+    - tw_retweetsCount
+    - tw_likesCount
+    - tw_repliesCount
+    - yt_likesCount
+    - yt_commentsCount
+    - tt_likesCount
+    - tt_sharesCount
+    - tt_commentsCount
+    - li_likesCount
+    - li_commentsCount
+  impressions_fields:
+    - impressions
+    - viewCount
+  formula:
+    total_engagement: "sum(fields_candidates)"
+    ipm: "total_engagement / impressions * 1000"
+
 output:
   replace_charts:
-  - chart10.xml
-  - chart11.xml
-  final_mode: updated
+    - chart1.xml
+    - chart2.xml
+  excel_file_name: p13_data.xlsx
+  final_pptx_name: p13-final.pptx
+
 fill_policy:
   axis_day_base: 20300
   keep_external_data: true
   external_data_format: xlsx
+  embedded_workbook_name: Microsoft_Excel_Worksheet1.xlsx
+
+quality_control:
+  allow_missing_fields: true
+  min_points_for_line: 3
+
+logging:
+  level: INFO
+  file: p13_build.log
