@@ -158,6 +158,9 @@ def _update_chart_values(chart_xml_path: Path, values):
     bodyPr.set('wrap', 'none')
     bodyPr.set('anchor', 'ctr')
     bodyPr.set('anchorCtr', '1')
+    # 自动适配文本到容器，进一步避免被截断
+    if bodyPr.find('{%(a)s}spAutoFit' % NS) is None:
+        ET.SubElement(bodyPr, '{%(a)s}spAutoFit' % NS)
     lstStyle = txPr.find('{%(a)s}lstStyle' % NS)
     if lstStyle is None:
         lstStyle = ET.SubElement(txPr, '{%(a)s}lstStyle' % NS)
@@ -202,6 +205,9 @@ def _update_chart_values(chart_xml_path: Path, values):
         bodyPr_ser.set('wrap', 'none')
         bodyPr_ser.set('anchor', 'ctr')
         bodyPr_ser.set('anchorCtr', '1')
+        # 自动适配文本到容器，进一步避免被截断
+        if bodyPr_ser.find('{%(a)s}spAutoFit' % NS) is None:
+            ET.SubElement(bodyPr_ser, '{%(a)s}spAutoFit' % NS)
         lstStyle_ser = txPr_ser.find('{%(a)s}lstStyle' % NS)
         if lstStyle_ser is None:
             lstStyle_ser = ET.SubElement(txPr_ser, '{%(a)s}lstStyle' % NS)
