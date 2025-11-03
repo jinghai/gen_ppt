@@ -17,8 +17,6 @@ from pathlib import Path
 from lxml import etree as ET
 import zipfile
 import shutil
-import subprocess
-import sys
 
 try:
     from openpyxl import load_workbook
@@ -60,10 +58,10 @@ def _ensure_templates():
     for i in range(1, 5):
         chart_file = charts_dir / f'chart{i}.xml'
         if not chart_file.exists():
-            print(f'[p18] 警告：图表文件不存在 {chart_file}，请先运行 generate_excel.py')
+            print(f'[p18] 警告：图表文件不存在 {chart_file}，请先准备模板解压与嵌入文件（例如先运行 charts/p18/generate_excel.py 或手动解压）')
         rels_file = rels_dir / f'chart{i}.xml.rels'
         if not rels_file.exists():
-            print(f'[p18] 警告：关系文件不存在 {rels_file}，请先运行 generate_excel.py')
+            print(f'[p18] 警告：关系文件不存在 {rels_file}，请先准备模板解压与嵌入文件（例如先运行 charts/p18/generate_excel.py 或手动解压）')
 
 
 def _set_external_auto_update(tree: ET.ElementTree):
@@ -242,12 +240,9 @@ def _clean_tmp_extracted():
         shutil.rmtree(extract_dir)
 
 
-def _run_generate_excel():
-    """运行页面级 generate_excel.py，内含解压模板与数据生成逻辑。"""
-    script = PAGE_DIR / 'generate_excel.py'
-    if not script.exists():
-        raise FileNotFoundError(f'缺少数据生成脚本: {script}')
-    subprocess.run([sys.executable, str(script)], check=True, cwd=str(PAGE_DIR))
+# 注意：本文件不再调用 generate_excel.py，以保持相对独立。
+# 运行顺序建议：先执行 charts/p18/generate_excel.py 以准备 tmp/ppt 与 p18_data.xlsx，
+# 再运行本脚本进行填充与打包；若前置文件缺失，将在后续校验中直接报错。
 
 
 def _update_content_types_for_xlsx(ct_path: Path, embed_names: list[str]):
@@ -366,12 +361,12 @@ def _package_final(output_path: Path):
 
 
 def main():
-    """端到端流程：清理 → 数据生成与解压 → 填充 → 文本更新 → 内容类型修正 → 打包。"""
-    # 1) 清理 tmp 已解压模板
-    _clean_tmp_extracted()
+    """端到端流程：校验 → 填充 → 文本更新 → 内容类型修正 → 打包。
 
-    # 2) 生成数据并解压模板到 tmp（generate_excel 负责解压）
-    _run_generate_excel()
+    说明：本脚本不负责解压模板与生成数据文件。请在运行前确保：
+    - 已存在 tmp/ppt 结构及相关 chart/slides/embeddings；
+    - 已生成 charts/p18/p18_data.xlsx。
+    缺失任何前置条件将直接报错，不做兜底。"""
 
     # 3) 路径解析与存在性校验
     ppt_root, charts_dir, rels_dir, embeddings_dir, slides_dir, ct_path = _resolve_tmp_paths()
