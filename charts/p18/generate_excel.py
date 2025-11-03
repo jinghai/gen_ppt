@@ -720,6 +720,135 @@ def main():
     ws.append(['Haters%'] + haters_values)
     ws.append(['Source'] + haters_sources)
 
+    # === 新增可解释性工作表 ===
+    
+    # 1. 原始数据详情工作表
+    ws_raw = wb.create_sheet('RawData')
+    ws_raw.append(['说明', '原始数据详情 - 用于人工检查和解释'])
+    ws_raw.append([])  # 空行
+    
+    # 收集所有月份的原始数据
+    all_months = sorted(set(months_main + months_split))
+    raw_data_rows = []
+    
+    if NETICLE_DB.exists():
+        with sqlite3.connect(str(NETICLE_DB)) as conn:
+            for ym in all_months:
+                try:
+                    result = _query_monthly_sentiment(conn, BRAND_KEY, ym)
+                    if result and len(result) == 4:
+                        pos_count, neu_count, neg_count, total_count = result
+                        
+                        pos_pct = _pct(pos_count, total_count)
+                        neu_pct = _pct(neu_count, total_count)
+                        neg_pct = _pct(neg_count, total_count)
+                        net_pct = pos_pct - neg_pct
+                        
+                        raw_data_rows.append([
+                            ym,
+                            pos_count,
+                            neu_count, 
+                            neg_count,
+                            total_count,
+                            f"{pos_count}/{total_count}*100 = {pos_pct}%",
+                            f"{neu_count}/{total_count}*100 = {neu_pct}%", 
+                            f"{neg_count}/{total_count}*100 = {neg_pct}%",
+                            f"{pos_pct} - {neg_pct} = {net_pct}%"
+                        ])
+                    else:
+                        raw_data_rows.append([ym, 0, 0, 0, 0, '无数据', '无数据', '无数据', '无数据'])
+                except Exception as e:
+                    raw_data_rows.append([ym, 'ERROR', 'ERROR', 'ERROR', 'ERROR', str(e), '', '', ''])
+    
+    ws_raw.append(['月份', '正向提及数', '中性提及数', '负向提及数', '总提及数', 'Lovers%计算', 'Neutral%计算', 'Haters%计算', 'NetLovers%计算'])
+    for row in raw_data_rows:
+        ws_raw.append(row)
+    
+    # 2. 计算过程详情工作表
+    ws_calc = wb.create_sheet('Calculation')
+    ws_calc.append(['说明', '计算过程详情 - 展示具体的计算逻辑和公式'])
+    ws_calc.append([])
+    
+    ws_calc.append(['计算公式说明'])
+    ws_calc.append(['指标', '计算公式', '阈值条件'])
+    ws_calc.append(['Lovers%', '正向提及数 / 总提及数 × 100', f'polarity >= {POS_MIN}'])
+    ws_calc.append(['Neutral%', '中性提及数 / 总提及数 × 100', f'{NEG_MAX} < polarity < {POS_MIN}'])
+    ws_calc.append(['Haters%', '负向提及数 / 总提及数 × 100', f'polarity <= {NEG_MAX}'])
+    ws_calc.append(['NetLovers%', 'Lovers% - Haters%', ''])
+    ws_calc.append([])
+    
+    ws_calc.append(['数据处理说明'])
+    ws_calc.append(['步骤', '说明'])
+    ws_calc.append(['1. 数据过滤', f'国家ID = {COUNTRY_ID} ({COUNTRY_NAME})'])
+    ws_calc.append(['2. 品牌匹配', f'关键词包含: {KEYWORD_LIKE}'])
+    ws_calc.append(['3. 情感分类', f'使用 {CFG_SENTIMENT_COL} 字段进行情感分类'])
+    ws_calc.append(['4. 月度聚合', '按月份聚合各情感类别的提及数'])
+    ws_calc.append(['5. 百分比计算', '各类别数量除以总数乘以100，四舍五入到整数'])
+    
+    # 3. 数据源说明工作表
+    ws_source = wb.create_sheet('DataSources')
+    ws_source.append(['说明', '数据源详细信息 - 便于追溯和验证'])
+    ws_source.append([])
+    
+    ws_source.append(['配置信息'])
+    ws_source.append(['项目', '值', '说明'])
+    ws_source.append(['数据库路径', str(NETICLE_DB), '情感分析数据来源'])
+    ws_source.append(['数据表名', TABLE_NAME, '使用的数据表'])
+    ws_source.append(['国家ID', COUNTRY_ID, f'目标国家: {COUNTRY_NAME}'])
+    ws_source.append(['品牌关键词', BRAND_KEY, '目标品牌'])
+    ws_source.append(['关键词匹配', KEYWORD_LIKE, '数据库查询条件'])
+    ws_source.append(['情感字段', CFG_SENTIMENT_COL, '用于情感分类的字段'])
+    ws_source.append([])
+    
+    ws_source.append(['月份配置'])
+    ws_source.append(['类型', '月份列表', '用途'])
+    ws_source.append(['主趋势月份', ', '.join(months_main), 'NetLovers%趋势图和排名'])
+    ws_source.append(['分割月份', ', '.join(months_split), 'Lovers/Neutral/Haters三小图'])
+    ws_source.append(['自动发现', str(AUTO_MONTHS), '是否自动发现可用月份'])
+    ws_source.append([])
+    
+    ws_source.append(['数据更新状态'])
+    ws_source.append(['数据类型', '更新数量', '总数量', '更新率'])
+    updated_main = sum(1 for s in main_sources if s == 'computed')
+    updated_lovers = sum(1 for s in lovers_sources if s == 'computed') 
+    updated_neutral = sum(1 for s in neutral_sources if s == 'computed')
+    updated_haters = sum(1 for s in haters_sources if s == 'computed')
+    ws_source.append(['主趋势', updated_main, len(main_sources), f'{updated_main/len(main_sources)*100:.1f}%'])
+    ws_source.append(['Lovers', updated_lovers, len(lovers_sources), f'{updated_lovers/len(lovers_sources)*100:.1f}%'])
+    ws_source.append(['Neutral', updated_neutral, len(neutral_sources), f'{updated_neutral/len(neutral_sources)*100:.1f}%'])
+    ws_source.append(['Haters', updated_haters, len(haters_sources), f'{updated_haters/len(haters_sources)*100:.1f}%'])
+    ws_source.append(['排名', computed_ranking_count, len(ranking_sources), f'{computed_ranking_count/len(ranking_sources)*100:.1f}%'])
+    
+    # 4. 阈值配置工作表
+    ws_thresh = wb.create_sheet('Thresholds')
+    ws_thresh.append(['说明', '情感分析阈值配置 - 用于理解分类标准'])
+    ws_thresh.append([])
+    
+    ws_thresh.append(['情感阈值设置'])
+    ws_thresh.append(['情感类别', '阈值条件', '数值范围', '说明'])
+    ws_thresh.append(['正向 (Lovers)', f'polarity >= {POS_MIN}', f'[{POS_MIN}, +∞)', '积极正面的提及'])
+    ws_thresh.append(['中性 (Neutral)', f'{NEG_MAX} < polarity < {POS_MIN}', f'({NEG_MAX}, {POS_MIN})', '中性客观的提及'])
+    ws_thresh.append(['负向 (Haters)', f'polarity <= {NEG_MAX}', f'(-∞, {NEG_MAX}]', '消极负面的提及'])
+    ws_thresh.append([])
+    
+    ws_thresh.append(['排名计算'])
+    ws_thresh.append(['参与品牌', ', '.join(BRANDS_FOR_RANK)])
+    ws_thresh.append(['排名依据', 'NetLovers% (Lovers% - Haters%)'])
+    ws_thresh.append(['排序方式', '降序 (NetLovers%越高排名越靠前)'])
+    ws_thresh.append([])
+    
+    ws_thresh.append(['数据质量检查'])
+    ws_thresh.append(['检查项', '状态', '说明'])
+    db_status = '正常' if NETICLE_DB.exists() else '缺失'
+    ws_thresh.append(['数据库文件', db_status, str(NETICLE_DB)])
+    
+    total_computed = updated_main + updated_lovers + updated_neutral + updated_haters + computed_ranking_count
+    data_status = '正常' if total_computed > 0 else '异常'
+    ws_thresh.append(['计算数据', data_status, f'共更新{total_computed}个数据点'])
+    
+    template_status = '正常' if any(s == 'template' for s in main_sources + lovers_sources + neutral_sources + haters_sources + ranking_sources) else '缺失'
+    ws_thresh.append(['模板数据', template_status, '作为基线数据使用'])
+
     # 输出到 p18 目录而不是 output 目录
     out_xlsx = PAGE_DIR / 'p18_data.xlsx'
     wb.save(str(out_xlsx))
@@ -735,6 +864,8 @@ def main():
         raise RuntimeError('[p18] 未从数据库得到任何覆盖数据，当前输出等同模板。请检查品牌匹配与月份配置。')
 
     # 7) 写出 4 份嵌入 xlsx（Sheet1）
+    # 注意：首行必须是纯数值，保持与 chartX.xml 的引用范围一致（如 Sheet1!$A$1:$D$1）。
+    # 不在嵌入工作簿中写入月份标签，避免 PPT 编辑时因数据类型不匹配导致系列消失。
     def write_embed(name: str, values: list[int]):
         wb2 = Workbook()
         ws2 = wb2.active
@@ -743,7 +874,9 @@ def main():
         fp = TEMPLATE_EMBED_DIR / name
         wb2.save(str(fp))
 
+    # Chart1 (主趋势) - 6个月 Mar-Aug
     write_embed('Microsoft_Office_Excel_Binary_Worksheet1.xlsx', main_values)
+    # Chart2-4 (情感分析) - 4个月 May-Aug
     write_embed('Microsoft_Office_Excel_Binary_Worksheet2.xlsx', lovers_values)
     write_embed('Microsoft_Office_Excel_Binary_Worksheet3.xlsx', neutral_values)
     write_embed('Microsoft_Office_Excel_Binary_Worksheet4.xlsx', haters_values)

@@ -101,6 +101,61 @@ def _update_chart_values(chart_xml_path: Path, values):
     if num_ref is None:
         raise RuntimeError(f'未找到数值引用: {chart_xml_path.name}')
     _write_num_cache_points(num_ref, values)
+    # 关键修复：移除固定的Y轴范围(<c:min>/<c:max>)，改为自动缩放，避免最后一个值超出轴范围被裁剪
+    for scaling in list(tree.findall('.//{%(c)s}valAx/{%(c)s}scaling' % NS)):
+        mn = scaling.find('{%(c)s}min' % NS)
+        mx = scaling.find('{%(c)s}max' % NS)
+        if mn is not None:
+            scaling.remove(mn)
+        if mx is not None:
+            scaling.remove(mx)
+    # 启用图表数据标签，使其随数据点移动并显示当前数值
+    line_chart = tree.find('.//{%(c)s}lineChart' % NS)
+    if line_chart is None:
+        raise RuntimeError(f'未找到折线图节点: {chart_xml_path.name}')
+    dLbls = line_chart.find('{%(c)s}dLbls' % NS)
+    if dLbls is None:
+        dLbls = ET.SubElement(line_chart, '{%(c)s}dLbls' % NS)
+    # 统一关闭不需要的标签项，开启数值标签
+    def _set_flag(parent, tag, val):
+        # 正确拼接命名空间前缀，避免格式化错误
+        el = parent.find(f'{{{NS["c"]}}}{tag}')
+        if el is None:
+            el = ET.SubElement(parent, f'{{{NS["c"]}}}{tag}')
+        el.set('val', str(val))
+    _set_flag(dLbls, 'showLegendKey', 0)
+    _set_flag(dLbls, 'showCatName', 0)
+    _set_flag(dLbls, 'showSerName', 0)
+    _set_flag(dLbls, 'showPercent', 0)
+    _set_flag(dLbls, 'showBubbleSize', 0)
+    _set_flag(dLbls, 'showLeaderLines', 0)
+    _set_flag(dLbls, 'showVal', 1)
+    # 标签位置：顶部（随点位变化），并设置数值格式为 0"%"（整数后加%号，不进行百分比缩放）
+    pos = dLbls.find('{%(c)s}dLblPos' % NS)
+    if pos is None:
+        pos = ET.SubElement(dLbls, '{%(c)s}dLblPos' % NS)
+    pos.set('val', 't')
+    numFmt = dLbls.find('{%(c)s}numFmt' % NS)
+    if numFmt is None:
+        numFmt = ET.SubElement(dLbls, '{%(c)s}numFmt' % NS)
+    numFmt.set('formatCode', '0"%"')
+    numFmt.set('sourceLinked', '0')
+    # 系列级也显式开启标签，避免模板默认关闭
+    for ser in list(line_chart.findall('{%(c)s}ser' % NS)):
+        dLbls_ser = ser.find('{%(c)s}dLbls' % NS)
+        if dLbls_ser is None:
+            dLbls_ser = ET.SubElement(ser, '{%(c)s}dLbls' % NS)
+        _set_flag(dLbls_ser, 'showVal', 1)
+        _set_flag(dLbls_ser, 'showLeaderLines', 0)
+        pos_ser = dLbls_ser.find('{%(c)s}dLblPos' % NS)
+        if pos_ser is None:
+            pos_ser = ET.SubElement(dLbls_ser, '{%(c)s}dLblPos' % NS)
+        pos_ser.set('val', 't')
+        numFmt_ser = dLbls_ser.find('{%(c)s}numFmt' % NS)
+        if numFmt_ser is None:
+            numFmt_ser = ET.SubElement(dLbls_ser, '{%(c)s}numFmt' % NS)
+        numFmt_ser.set('formatCode', '0"%"')
+        numFmt_ser.set('sourceLinked', '0')
     _set_external_auto_update(ET.ElementTree(tree))
     chart_xml_path.write_bytes(ET.tostring(tree, xml_declaration=True, encoding='UTF-8', standalone='yes'))
 
@@ -215,19 +270,20 @@ def _read_main_values() -> list[int]:
 
 
 def _update_main_percent_texts(slide_xml_path: Path, values: list[int]):
-    """更新 slide1.xml 中前 6 个百分比文本（形如 35%）。"""
+    """已弃用：使用图表数据标签替代静态文本。
+    为避免位置与数值不同步，这里改为清空这些静态百分比文本。
+    """
     import re as _re
     root = ET.fromstring(slide_xml_path.read_bytes())
     ns_a = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-    nodes = []
+    cleared = 0
     for t in root.findall('.//{%s}t' % ns_a):
         tx = (t.text or '').strip()
         if _re.fullmatch(r'\d+%$', tx):
-            nodes.append(t)
-    if len(nodes) < len(values):
-        raise RuntimeError(f'[p18] 百分比文本节点不足：期望 {len(values)}，实际 {len(nodes)}')
-    for i in range(len(values)):
-        nodes[i].text = f'{int(values[i])}%'
+            t.text = ''
+            cleared += 1
+    if cleared == 0:
+        raise RuntimeError('[p18] 未发现可清理的静态百分比文本节点')
     slide_xml_path.write_bytes(ET.tostring(root, xml_declaration=True, encoding='UTF-8', standalone='yes'))
 
 
@@ -278,7 +334,7 @@ def main():
         if not (embeddings_dir / embed_name).exists():
             raise FileNotFoundError(f'[p18] 缺少嵌入工作簿: {embeddings_dir / embed_name}')
 
-    # 6) 更新 slide1 文本：Ranking 与前 6 个百分比
+    # 6) 更新 slide1 文本：仅更新 Ranking，并清空主趋势静态百分比文本（改用图表数据标签）
     slide1 = slides_dir / 'slide1.xml'
     if not slide1.exists():
         raise FileNotFoundError(f'[p18] 模板缺少 slide1.xml: {slide1}')

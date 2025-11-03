@@ -280,46 +280,25 @@ def build():
                 elif name == '[Content_Types].xml':
                     z.writestr(name, new_ct_xml)
                 elif name == f'ppt/slides/slide{SLIDE_NO}.xml':
-                    # 重命名为 slide1.xml，并更新 Ranking 与主趋势百分比文本
+                    # 重命名为 slide1.xml，并更新 Ranking；主趋势百分比改为使用图表数据标签
                     original = tpl.read(name)
                     updated = _update_ranking_in_slide(original, ranks)
                     # 读取 MainTrend 数值并覆盖前 6 个百分比文本（形如 "35%"）
-                    def _read_main_values() -> list[int]:
-                        from openpyxl import load_workbook
-                        xlsx = PAGE_DIR / 'p18_data.xlsx'
-                        if not xlsx.exists():
-                            raise FileNotFoundError(f'[p{SLIDE_NO}] 缺少主趋势数据文件: {xlsx}，请先生成')
-                        wb = load_workbook(str(xlsx), data_only=True)
-                        if 'MainTrend' not in wb.sheetnames:
-                            raise RuntimeError('[p18] p18_data.xlsx 缺少 MainTrend 工作表')
-                        ws = wb['MainTrend']
-                        row = list(ws.iter_rows(min_row=2, max_row=2, values_only=True))[0]
-                        vals = []
-                        for v in row[1:]:
-                            if v is None:
-                                raise RuntimeError('[p18] MainTrend 存在空值，禁止兜底')
-                            vals.append(int(round(float(v))))
-                        if len(vals) != 6:
-                            raise RuntimeError(f'[p18] MainTrend 期望 6 个值，实际 {len(vals)}')
-                        return vals
-
-                    def _update_main_percent_texts(slide_xml_bytes: bytes, values: list[int]) -> bytes:
+                    def _clear_main_percent_texts(slide_xml_bytes: bytes) -> bytes:
                         import re as _re
                         root = ET.fromstring(slide_xml_bytes)
                         ns_a = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-                        nodes = []
+                        cleared = 0
                         for t in root.findall('.//{%s}t' % ns_a):
                             tx = (t.text or '').strip()
                             if _re.fullmatch(r'\d+%$', tx):
-                                nodes.append(t)
-                        if len(nodes) < len(values):
-                            raise RuntimeError(f'[p18] 百分比文本节点不足：期望 {len(values)}，实际 {len(nodes)}')
-                        for i in range(len(values)):
-                            nodes[i].text = f'{int(values[i])}%'
+                                t.text = ''
+                                cleared += 1
+                        if cleared == 0:
+                            raise RuntimeError('[p18] 未发现可清理的静态百分比文本节点')
                         return ET.tostring(root, xml_declaration=True, encoding='UTF-8', standalone='yes')
 
-                    main_vals = _read_main_values()
-                    updated = _update_main_percent_texts(updated, main_vals)
+                    updated = _clear_main_percent_texts(updated)
                     z.writestr('ppt/slides/slide1.xml', updated)
                 elif name == f'ppt/slides/_rels/slide{SLIDE_NO}.xml.rels':
                     # 重命名为 slide1.xml.rels
