@@ -37,7 +37,7 @@ sentiment_thresholds:
 
 # 排名品牌配置
 ranking:
-  brands: ["lenovo", "hp", "dell", "asus", "acer"]
+  brands: ["lenovo","dell","hp","asus","acer","apple","samsung"]  # 参与排名的品牌列表
 ```
 
 ## 数据来源与查询规则

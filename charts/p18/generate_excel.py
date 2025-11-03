@@ -63,9 +63,10 @@ CFG_SENTIMENT_COL = CFG.get('sentiment', {}).get('thresholds', {}).get('column',
 MONTHS_MAIN = CFG.get('months', {}).get('main', ['2025-07','2025-08','2025-09','2025-10','2025-11','2025-12'])
 MONTHS_SPLIT = CFG.get('months', {}).get('split', ['2025-09','2025-10','2025-11','2025-12'])
 AUTO_MONTHS = bool(CFG.get('months', {}).get('auto_discover', False))
-BRANDS_FOR_RANK = CFG.get('ranking', {}).get('brands', ['Lenovo','Apple','HP','Dell','Acer','ASUS','Huawei','MSI'])
+BRANDS_FOR_RANK = CFG.get('ranking', {}).get('brands', ['lenovo','dell','hp','asus','acer','apple','samsung'])
 COUNTRY_ID = CFG.get('filters', {}).get('country_id', 39)
 COUNTRY_NAME = CFG.get('filters', {}).get('country_name', 'France')
+BRAND_KEY = CFG.get('filters', {}).get('brand_key', 'Lenovo')
 KEYWORD_LIKE = CFG.get('filters', {}).get('keyword_like', '%lenovo%')
 POS_MIN = float(CFG.get('sentiment', {}).get('thresholds', {}).get('positive_min', 0.33))
 NEG_MAX = float(CFG.get('sentiment', {}).get('thresholds', {}).get('negative_max', -0.33))
@@ -604,8 +605,8 @@ def main():
                         # 自动发现失败直接抛出，避免静默兜底
                         raise
                 
-                # 计算 Lenovo 的数据
-                lv_l, lv_n, lv_h, lv_net = compute_for_brand(conn, 'Lenovo', months_main)
+                # 计算品牌的数据
+                lv_l, lv_n, lv_h, lv_net = compute_for_brand(conn, BRAND_KEY, months_main)
                 
                 # 更新主趋势数据
                 for i, ym in enumerate(months_main):
@@ -675,7 +676,7 @@ def main():
                 scores.sort(key=lambda x: x[1], reverse=True)
                 pos = None
                 for j, (b, _) in enumerate(scores, start=1):
-                    if b.lower() == 'lenovo':
+                    if b.lower() == BRAND_KEY.lower():
                         pos = j
                         break
                 if pos is not None:
@@ -683,7 +684,7 @@ def main():
                     ranking_sources[i] = 'computed'
                     computed_ranking_count += 1
                 else:
-                    print(f"[p18] {ym} 排名未找到 Lenovo，沿用模板值: #{ranking_values[i]}")
+                    print(f"[p18] {ym} 排名未找到 {BRAND_KEY}，沿用模板值: #{ranking_values[i]}")
     else:
         print('[p18] 数据库不可用，Ranking 保持模板值')
     
