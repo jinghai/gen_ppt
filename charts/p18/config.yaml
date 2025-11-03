@@ -1,11 +1,47 @@
+## P18页面配置（MVP）
+
+project:
+  name: "P18-Net-Lovers-France"          # 项目标识（说明用途，不参与计算）
+  template_file: "p18.pptx"             # 模板PPT文件名（位于 charts/p18/）
+  output_dir: "output"                  # 输出目录（相对页面目录，禁止HTTP预览）
+  tmp_dir: "tmp"                        # 临时解压与中间文件目录（页面级隔离）
+
+data_sources:
+  neticle_db: ../../input/neticle-v4-08.sqlite     # 舆情原始库
+  metrics_db: ../../input/metrics-v4-08.db         # 指标聚合库
+  neticle_table: mentions_wide                      # 宽表表名（主查询来源）
+  date_column: createdAtUtcMs                       # 时间戳字段（毫秒）
+  country_column: countryId                         # 国家字段（用于过滤）
+
+filters:
+  country_id: 39                      # 法国=39（必填）
+  country_name: "France"            # 说明性字段（不参与计算）
+  brand_key: "Lenovo"               # 品牌主键（展示/过滤使用）
+  keyword_like: "%lenovo%"          # 品牌关键词匹配（不区分大小写）
+
+sentiment:
+  thresholds:
+    positive_min: 0.33               # 正向阈值（> 此值判定为正向）
+    negative_max: -0.33              # 负向阈值（< 此值判定为负向）
+    column: polarity                 # 情感分值字段（来自宽表）
+
+months:
+  main: ["2025-03","2025-04","2025-05","2025-06","2025-07","2025-08"]  # 与模板主趋势完全一致的 6 个月
+  split: ["2025-05","2025-06","2025-07","2025-08"]                          # 与模板分割图一致的 4 个月
+  auto_discover: false                                                       # 关闭自动发现；如模板月份不一致，应报错
+
+ranking:
+  brands: ["lenovo","dell","hp","asus","acer","apple","samsung"]  # 参与排名的品牌列表（展示 Lenovo 的名次）
+
 output:
   replace_charts:
-  - chart25.xml
-  - chart26.xml
-  - chart27.xml
-  - chart28.xml
-  final_mode: updated
+  - chart1.xml
+  - chart2.xml
+  - chart3.xml
+  - chart4.xml
+  final_mode: updated                 # 打包模式：updated=覆盖数据但保留模板样式
+
 fill_policy:
-  axis_day_base: 20300
-  keep_external_data: true
-  external_data_format: xlsx
+  axis_day_base: 20300                # Excel 日期基准（用于日期序列校准）
+  keep_external_data: true            # 保留嵌入 xlsx 并设置 autoUpdate=1
+  external_data_format: xlsx          # 图表外部数据格式，仅支持 xlsx

@@ -64,16 +64,17 @@ def _resolve_unz_root() -> Path:
 UNZ = _resolve_unz_root()
 # 标准化输出目录至页面内，避免跨页共享输出目录导致混淆
 PAGE_DIR = Path(__file__).resolve().parent
-OUT = PAGE_DIR / 'output' / f'p{SLIDE_NO}.pptx'
+OUT = PAGE_DIR / 'output' / f'p{SLIDE_NO}-final.pptx'
 
-# 嵌入工作簿目录：优先页面内模板，其次回退到全局模板解压目录
-EMBED_DIR = PAGE_DIR / 'template' / 'ppt' / 'embeddings'
+# 嵌入工作簿目录：统一使用tmp/ppt/ppt/embeddings目录
+TMP_DIR = PAGE_DIR / 'tmp'
+EMBED_DIR = TMP_DIR / 'ppt' / 'ppt' / 'embeddings'
 if not EMBED_DIR.exists():
     EMBED_DIR = UNZ / 'ppt' / 'embeddings'
 
-# 图表目录优先使用页面微模板，其次回退到全局模板解压目录
-# 优先级：charts/p18/template/ppt/charts → UNZ/ppt/charts → UNZ/charts
-PAGE_CHARTS_DIR = PAGE_DIR / 'template' / 'ppt' / 'charts'
+# 图表目录：统一使用tmp/ppt/ppt/charts目录
+# 优先级：tmp/ppt/ppt/charts → UNZ/ppt/charts → UNZ/charts
+PAGE_CHARTS_DIR = TMP_DIR / 'ppt' / 'ppt' / 'charts'
 PAGE_CHARTS_RELS_DIR = PAGE_CHARTS_DIR / '_rels'
 if PAGE_CHARTS_DIR.exists():
     CHARTS_DIR = PAGE_CHARTS_DIR
@@ -115,7 +116,7 @@ def build():
         pres_xml_bytes = tpl.read('ppt/presentation.xml')
         ct_bytes = tpl.read('[Content_Types].xml')
 
-    # 预加载图表及关系作为回退
+    # 预加载图表及关系作为回退（页面级 tmp 优先）
     charts_fallback = {}
     if CHARTS_DIR.exists():
         for chart_file in CHARTS_DIR.glob('chart*.xml'):
@@ -193,7 +194,78 @@ def build():
             slide_rels_bytes = tpl.read(f'ppt/slides/_rels/slide{SLIDE_NO}.xml.rels')
         except KeyError:
             pass
+
+        # 将 tmp/ppt/ppt/charts 的 chart1..4.xml 映射到当前页的目标图表名（例如 chart25..28.xml）
+        def _remap_charts_for_slide(slide_rels_bytes: Optional[bytes]):
+            if not slide_rels_bytes:
+                return
+            try:
+                root = ET.fromstring(slide_rels_bytes)
+                ns_rel = 'http://schemas.openxmlformats.org/package/2006/relationships'
+                targets = []
+                for rel in root.findall('{%s}Relationship' % ns_rel):
+                    typ = rel.get('Type') or ''
+                    if typ.endswith('/chart'):
+                        tgt = rel.get('Target') or ''
+                        nm = tgt.split('/')[-1]  # e.g. '../charts/chart25.xml' -> 'chart25.xml'
+                        targets.append(nm)
+                # 若页面级存在 chart1..4，则按出现顺序映射到目标名
+                for idx, nm in enumerate(targets, start=1):
+                    src_nm = f'chart{idx}.xml'
+                    src_rels_nm = f'chart{idx}.xml.rels'
+                    if src_nm in charts_fallback:
+                        charts_fallback[nm] = charts_fallback[src_nm]
+                    if f'rels:{src_rels_nm}' in charts_fallback:
+                        charts_fallback[f"rels:{nm.replace('.xml', '.xml.rels')}"] = charts_fallback[f'rels:{src_rels_nm}']
+            except Exception:
+                # 映射失败不兜底，保持原模板图表
+                pass
+
+        _remap_charts_for_slide(slide_rels_bytes)
         
+        # 读取 Ranking 值（用于更新 slide 文本）
+        def _read_ranking_values() -> list[int]:
+            from openpyxl import load_workbook
+            xlsx = PAGE_DIR / 'p18_data.xlsx'
+            if not xlsx.exists():
+                raise FileNotFoundError(f'[p{SLIDE_NO}] 缺少排名数据文件: {xlsx}，请先生成')
+            wb = load_workbook(str(xlsx), data_only=True)
+            if 'Ranking' not in wb.sheetnames:
+                raise RuntimeError('[p18] p18_data.xlsx 缺少 Ranking 工作表')
+            ws = wb['Ranking']
+            # 第二行：Position
+            row = list(ws.iter_rows(min_row=2, max_row=2, values_only=True))[0]
+            vals = []
+            for v in row[1:]:
+                if v is None:
+                    raise RuntimeError('[p18] Ranking 存在空值，禁止兜底')
+                vals.append(int(v))
+            if not vals:
+                raise RuntimeError('[p18] Ranking 为空，禁止兜底')
+            return vals
+
+        def _update_ranking_in_slide(slide_xml_bytes: bytes, ranks: list[int]) -> bytes:
+            # 目标：将形如 <a:t>#3</a:t> 的文本按顺序替换为 ranks
+            root = ET.fromstring(slide_xml_bytes)
+            ns_a = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+            nodes = []
+            for t in root.findall('.//{%s}t' % ns_a):
+                text = (t.text or '')
+                if text.startswith('#') and text[1:].isdigit():
+                    nodes.append(t)
+            if len(nodes) != len(ranks):
+                raise RuntimeError(f'[p18] Ranking 文本节点数量({len(nodes)})与数据数量({len(ranks)})不一致')
+            for i, t in enumerate(nodes):
+                t.text = f'#{int(ranks[i])}'
+            return ET.tostring(root, xml_declaration=True, encoding='UTF-8', standalone='yes')
+
+        ranks = None
+        try:
+            ranks = _read_ranking_values()
+        except Exception as e:
+            # 按用户要求：不做兜底，直接抛错
+            raise
+
         with zipfile.ZipFile(OUT, 'w', compression=zipfile.ZIP_DEFLATED) as z:
             for name in tpl.namelist():
                 # 去除非指定页的幻灯片
@@ -208,8 +280,47 @@ def build():
                 elif name == '[Content_Types].xml':
                     z.writestr(name, new_ct_xml)
                 elif name == f'ppt/slides/slide{SLIDE_NO}.xml':
-                    # 重命名为 slide1.xml
-                    z.writestr('ppt/slides/slide1.xml', tpl.read(name))
+                    # 重命名为 slide1.xml，并更新 Ranking 与主趋势百分比文本
+                    original = tpl.read(name)
+                    updated = _update_ranking_in_slide(original, ranks)
+                    # 读取 MainTrend 数值并覆盖前 6 个百分比文本（形如 "35%"）
+                    def _read_main_values() -> list[int]:
+                        from openpyxl import load_workbook
+                        xlsx = PAGE_DIR / 'p18_data.xlsx'
+                        if not xlsx.exists():
+                            raise FileNotFoundError(f'[p{SLIDE_NO}] 缺少主趋势数据文件: {xlsx}，请先生成')
+                        wb = load_workbook(str(xlsx), data_only=True)
+                        if 'MainTrend' not in wb.sheetnames:
+                            raise RuntimeError('[p18] p18_data.xlsx 缺少 MainTrend 工作表')
+                        ws = wb['MainTrend']
+                        row = list(ws.iter_rows(min_row=2, max_row=2, values_only=True))[0]
+                        vals = []
+                        for v in row[1:]:
+                            if v is None:
+                                raise RuntimeError('[p18] MainTrend 存在空值，禁止兜底')
+                            vals.append(int(round(float(v))))
+                        if len(vals) != 6:
+                            raise RuntimeError(f'[p18] MainTrend 期望 6 个值，实际 {len(vals)}')
+                        return vals
+
+                    def _update_main_percent_texts(slide_xml_bytes: bytes, values: list[int]) -> bytes:
+                        import re as _re
+                        root = ET.fromstring(slide_xml_bytes)
+                        ns_a = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                        nodes = []
+                        for t in root.findall('.//{%s}t' % ns_a):
+                            tx = (t.text or '').strip()
+                            if _re.fullmatch(r'\d+%$', tx):
+                                nodes.append(t)
+                        if len(nodes) < len(values):
+                            raise RuntimeError(f'[p18] 百分比文本节点不足：期望 {len(values)}，实际 {len(nodes)}')
+                        for i in range(len(values)):
+                            nodes[i].text = f'{int(values[i])}%'
+                        return ET.tostring(root, xml_declaration=True, encoding='UTF-8', standalone='yes')
+
+                    main_vals = _read_main_values()
+                    updated = _update_main_percent_texts(updated, main_vals)
+                    z.writestr('ppt/slides/slide1.xml', updated)
                 elif name == f'ppt/slides/_rels/slide{SLIDE_NO}.xml.rels':
                     # 重命名为 slide1.xml.rels
                     z.writestr('ppt/slides/_rels/slide1.xml.rels', tpl.read(name))
@@ -242,26 +353,29 @@ def build():
 import subprocess, sys, re
 
 def run_make_data():
+    """运行页面级数据生成脚本 generate_excel.py，产出 output/p18_data.xlsx 与嵌入 xlsx。"""
     page_dir = Path(__file__).resolve().parent
-    script = page_dir / 'make_data.py'
+    script = page_dir / 'generate_excel.py'
     if script.exists():
-        print(f'[p{SLIDE_NO}] run make_data.py')
+        print(f'[p{SLIDE_NO}] run generate_excel.py')
         subprocess.run([sys.executable, str(script)], check=True, cwd=str(page_dir))
     else:
-        print(f'[p{SLIDE_NO}] skip make_data.py (not found)')
+        print(f'[p{SLIDE_NO}] skip generate_excel.py (not found)')
 
 def run_fillers():
+    """运行页面级填充脚本 fill_from_excel.py，更新 chartXML 与 rels。"""
     page_dir = Path(__file__).resolve().parent
-    chart_dirs = sorted([d for d in page_dir.iterdir() if d.is_dir() and re.match(r'^chart\\d+$', d.name)])
-    for d in chart_dirs:
-        fill = d / 'fill.py'
-        if fill.exists():
-            print(f'[p{SLIDE_NO}] run {fill.name} in {d.name}')
-            subprocess.run([sys.executable, str(fill)], check=True, cwd=str(d))
-        else:
-            print(f'[p{SLIDE_NO}] skip {d.name}/fill.py (not found)')
+    script = page_dir / 'fill_from_excel.py'
+    if script.exists():
+        print(f'[p{SLIDE_NO}] run fill_from_excel.py')
+        subprocess.run([sys.executable, str(script)], check=True, cwd=str(page_dir))
+    else:
+        print(f'[p{SLIDE_NO}] skip fill_from_excel.py (not found)')
 
 if __name__ == '__main__':
-    run_make_data()
-    run_fillers()
-    build()
+    # 委托到页面级填充与打包脚本，避免重复打包与样式偏差
+    page_dir = Path(__file__).resolve().parent
+    script = page_dir / 'fill_from_excel.py'
+    if not script.exists():
+        raise FileNotFoundError(f'缺少脚本: {script}')
+    subprocess.run([sys.executable, str(script)], check=True, cwd=str(page_dir))
