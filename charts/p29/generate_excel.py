@@ -14,6 +14,8 @@ from collections import defaultdict
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
+import openpyxl
+import math
 
 # 项目路径配置
 ROOT = Path(__file__).resolve().parent
@@ -142,23 +144,69 @@ def calculate_channel_sov(df, config):
 def calculate_brand_total_sov(df, config):
     """计算品牌总体声量份额（饼图数据）"""
     brands_display = config['filters']['brands_display']
-    
+
     # 按品牌聚合总提及数
     brand_totals = df.groupby('Brand')['Mention_Count'].sum().reset_index()
     total_mentions = brand_totals['Mention_Count'].sum()
     
-    pie_data = []
-    for brand in brands_display:
-        brand_mentions = brand_totals[brand_totals['Brand'] == brand]['Mention_Count'].sum()
-        percentage = round((brand_mentions / total_mentions * 100), 1) if total_mentions > 0 else 0.0
-        
-        pie_data.append({
-            'Brand': brand,
-            'Total_Mentions': brand_mentions,
-            'Percentage': percentage
+    # 使用最大余数法（Largest Remainder Method）将百分比整数化并保证总和为100。
+    # 说明：相比逐个四舍五入，该方法先按精确配额取地板值，再按余数大小分配剩余点数，
+    #       可严格保证总和为100，避免出现超过/低于100的情况。
+    def allocate_percentages_lrm(weights, target=100):
+        """
+        最大余数法分配：给定非负权重列表，分配整数百分比使总和严格等于 target。
+        - weights: 各品牌的权重（这里使用提及数）
+        - target: 目标总和（默认100）
+        返回：与 weights 同长度的整数列表，和为 target（若总权重为0则全为0）。
+        """
+        total = float(sum(weights))
+        if total <= 0 or target <= 0:
+            return [0] * len(weights)
+
+        quotas = [target * (w / total) for w in weights]
+        floors = [int(math.floor(q)) for q in quotas]
+        remainder = [q - f for q, f in zip(quotas, floors)]
+        base_sum = sum(floors)
+        need = target - base_sum
+
+        if need > 0:
+            # 余数从大到小分配剩余点数；稳定排序保证品牌顺序可重复。
+            order = sorted(range(len(weights)), key=lambda i: (-remainder[i], i))
+            for i in order[:need]:
+                floors[i] += 1
+        elif need < 0:
+            # 极罕见的浮点异常保护：如果地板和超过目标，则按余数从小到大回收。
+            order = sorted(range(len(weights)), key=lambda i: (remainder[i], i))
+            for i in order[:abs(need)]:
+                # 避免负数，最少为0
+                floors[i] = max(0, floors[i] - 1)
+
+        # 最终校验；若仍有偏差（理论不应发生），按顺序微调到匹配目标。
+        diff = target - sum(floors)
+        if diff != 0 and len(floors) > 0:
+            seq = list(range(len(floors)))
+            if diff > 0:
+                for i in seq[:diff]:
+                    floors[i] += 1
+            else:
+                for i in seq[:abs(diff)]:
+                    floors[i] = max(0, floors[i] - 1)
+        return floors
+
+    # 构造权重（按展示名顺序），并执行最大余数法分配
+    weights = [int(brand_totals[brand_totals['Brand'] == b]['Mention_Count'].sum()) for b in brands_display]
+    allocations = allocate_percentages_lrm(weights, target=100)
+
+    # 组装输出数据框
+    pie_rows = []
+    for b, w, p in zip(brands_display, weights, allocations):
+        pie_rows.append({
+            'Brand': b,
+            'Total_Mentions': w,
+            'Percentage': int(p)
         })
-    
-    return pd.DataFrame(pie_data)
+
+    return pd.DataFrame(pie_rows)
 
 def style_worksheet(ws, title):
     """设置工作表样式"""
@@ -226,6 +274,80 @@ def style_worksheet(ws, title):
         adjusted_width = min(max_length + 2, 30)
         ws.column_dimensions[column_letter].width = adjusted_width
 
+def build_sheet1(workbook, sov_data: pd.DataFrame, config):
+    """
+    构建标准 Sheet1：
+    - 第1行：B.. 为品牌名；A1 留空
+    - 第2..N行：A列为渠道名；B.. 为对应品牌在该渠道的数值（整数百分比）
+
+    说明：此 Sheet1 专供 PowerPoint 图表的系列绑定使用，保持最小必要结构。
+    """
+    brands_display = config['filters']['brands_display']
+    channels = config['fill_policy']['channel_order']
+
+    # 若已有 Sheet1，先移除以保证结构一致
+    if 'Sheet1' in workbook.sheetnames:
+        ws_old = workbook['Sheet1']
+        workbook.remove(ws_old)
+    ws = workbook.create_sheet('Sheet1', 0)
+
+    # 表头：品牌名（B..）
+    ws.cell(row=1, column=1, value=None)
+    for col_idx, brand in enumerate(brands_display, start=2):
+        ws.cell(row=1, column=col_idx, value=brand)
+
+    # 采用最大余数法为每行分配整数百分比，使行总和严格为100。
+    # 为避免浮点传播误差，权重直接使用提及数 Mentions。
+    def allocate_percentages_lrm(weights, target=100):
+        """
+        行级百分比分配（最大余数法）。
+        - weights: 当前渠道下各品牌的提及数列表
+        - target: 目标总和（固定为100）
+        返回：与 weights 同长度的整数列表；若总权重为0则全为0（总和=0）。
+        注：当某渠道总提及为0时，保持全0以如实反映无数据，不强制造100。
+        """
+        total = float(sum(weights))
+        if total <= 0:
+            return [0] * len(weights)
+        quotas = [target * (w / total) for w in weights]
+        floors = [int(math.floor(q)) for q in quotas]
+        remainder = [q - f for q, f in zip(quotas, floors)]
+        base_sum = sum(floors)
+        need = target - base_sum
+        if need > 0:
+            order = sorted(range(len(weights)), key=lambda i: (-remainder[i], i))
+            for i in order[:need]:
+                floors[i] += 1
+        elif need < 0:
+            order = sorted(range(len(weights)), key=lambda i: (remainder[i], i))
+            for i in order[:abs(need)]:
+                floors[i] = max(0, floors[i] - 1)
+        return floors
+
+    # 填充各渠道数据（整数，行和=100 或 0（无数据））
+    for r_idx, channel in enumerate(channels, start=2):
+        ws.cell(row=r_idx, column=1, value=channel)
+
+        # 收集该渠道下各品牌的权重（提及数）
+        channel_rows = sov_data[sov_data['Channel'] == channel]
+        weights = []
+        for brand in brands_display:
+            row_sel = channel_rows[channel_rows['Brand'] == brand]
+            w = int(row_sel['Mentions'].iloc[0]) if not row_sel.empty else 0
+            weights.append(w)
+
+        allocations = allocate_percentages_lrm(weights, target=100)
+
+        for c_idx, val in enumerate(allocations, start=2):
+            ws.cell(row=r_idx, column=c_idx, value=int(val))
+
+    # 简单对齐与列宽（避免过度设计）
+    for col_num in range(1, ws.max_column + 1):
+        column_letter = openpyxl.utils.get_column_letter(col_num)
+        ws.column_dimensions[column_letter].width = 14
+
+    return ws
+
 def create_excel_file(config):
     """创建Excel文件"""
     print("正在提取数据...")
@@ -250,7 +372,11 @@ def create_excel_file(config):
         # 写入各个工作表
         raw_data.to_excel(writer, sheet_name='原始数据', index=False, startrow=1)
         sov_data.to_excel(writer, sheet_name='渠道SOV数据', index=False, startrow=1)
-        pie_data.to_excel(writer, sheet_name='品牌总体SOV', index=False, startrow=1)
+        # 品牌总体SOV百分比保留整数
+        pie_data_int = pie_data.copy()
+        if 'Percentage' in pie_data_int.columns:
+            pie_data_int['Percentage'] = pie_data_int['Percentage'].astype(int)
+        pie_data_int.to_excel(writer, sheet_name='品牌总体SOV', index=False, startrow=1)
         
         # 获取工作簿对象
         workbook = writer.book
@@ -259,6 +385,9 @@ def create_excel_file(config):
         style_worksheet(workbook['原始数据'], 'P29 - 原始提及数据')
         style_worksheet(workbook['渠道SOV数据'], 'P29 - 各渠道品牌声量份额')
         style_worksheet(workbook['品牌总体SOV'], 'P29 - 品牌总体声量份额（饼图）')
+
+        # 生成 Sheet1（供 PPT 图表绑定使用），按“列为品牌、行为渠道”的布局，数据为整数
+        build_sheet1(workbook, sov_data, config)
     
     print(f"Excel文件已生成：{output_path}")
     print(f"- 原始数据：{len(raw_data)} 条记录")

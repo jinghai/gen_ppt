@@ -80,6 +80,8 @@ fill_policy:
   sentiment_labels: [Positive, Neutral, Negative]  # 情感标签顺序（统一口径）
   # 渠道排序需与原图横轴一致：Forum, Online News, Blog, X, Instagram, YouTube
   channel_order: ["Forum", "Online News", "Blog", "X", "Instagram", "YouTube"]
+  # 小比例标签可选隐藏阈值（整数百分比）。0 表示不隐藏；设置为 2 将隐藏 1%、2% 的标签。
+  min_label_percent: 0
 
 # 输出配置
 output:

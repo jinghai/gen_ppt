@@ -6,6 +6,7 @@ P29页面PPT数据填充器
 """
 
 import json
+import re
 import pandas as pd
 import yaml
 from pathlib import Path
@@ -41,40 +42,50 @@ def read_excel_data(excel_path):
     
     return sov_data, pie_data
 
-def prepare_chart_data(sov_data, pie_data, config):
-    """准备图表数据格式"""
+def prepare_chart_data(sov_data, pie_data, config, excel_path):
+    """
+    准备图表数据格式
+    - 左侧堆叠柱状图：优先从 Excel 的 Sheet1 读取（保留你手动修改的值）；
+      若不存在 Sheet1 或布局非法，将抛错，不做兜底。
+    - 右侧饼图：从“品牌总体SOV”读取（用于饼图和右侧文本）。
+    """
     channels = config['fill_policy']['channel_order']
     brands_display = config['filters']['brands_display']
-    
-    # 准备左侧堆叠柱状图数据
+
+    # 优先用 Sheet1（B..列为品牌，A 列为渠道；第1行为表头，第1列为渠道名）
+    wb = openpyxl.load_workbook(excel_path, data_only=True)
+    if 'Sheet1' not in wb.sheetnames:
+        raise RuntimeError('Excel 缺少 Sheet1，请先使用 generate_excel.py 生成标准布局')
+    ws = wb['Sheet1']
+
+    # 按配置顺序读取各品牌、各渠道的整数/小数百分比，统一转为 float
     chart_labels = channels
     chart_series = []
-    
-    for brand in brands_display:
-        brand_data = sov_data[sov_data['Brand'] == brand]
+    for c_idx, brand in enumerate(brands_display, start=2):
+        header_val = ws.cell(row=1, column=c_idx).value
+        if str(header_val) != brand:
+            raise RuntimeError(f'Sheet1 第 {c_idx} 列表头应为 {brand}，实际为 {header_val}')
         values = []
-        
-        for channel in channels:
-            channel_data = brand_data[brand_data['Channel'] == channel]
-            if not channel_data.empty:
-                values.append(float(channel_data['SOV_Percentage'].iloc[0]))
-            else:
-                values.append(0.0)
-        
-        chart_series.append({
-            'name': brand,
-            'values': values
-        })
-    
-    # 准备右侧饼图数据
+        for r_idx, channel in enumerate(channels, start=2):
+            row_label = ws.cell(row=r_idx, column=1).value
+            if str(row_label) != channel:
+                raise RuntimeError(f'Sheet1 第 {r_idx} 行渠道应为 {channel}，实际为 {row_label}')
+            v = ws.cell(row=r_idx, column=c_idx).value
+            try:
+                values.append(float(v or 0))
+            except Exception:
+                raise RuntimeError(f'Sheet1 值不可解析为数字：行 {r_idx} 列 {c_idx}，值 {v}')
+        chart_series.append({'name': brand, 'values': values})
+
+    # 右侧饼图数据
     pie_labels = []
     pie_values = []
-    
     for _, row in pie_data.iterrows():
         if row['Percentage'] > 0:  # 只包含有数据的品牌
             pie_labels.append(row['Brand'])
             pie_values.append(float(row['Percentage']))
-    
+
+    print('柱状图数据来源：Sheet1（保留手动修改）')
     return {
         'bar_chart': {
             'labels': chart_labels,
@@ -125,101 +136,76 @@ def extract_ppt_template():
     print(f"PPT模板已解压到：{extract_dir}")
     return extract_dir
 
-def reshape_excel_for_editing(excel_path, chart_data, config):
-    """
-    将 p29_data.xlsx 的 Sheet1 重塑为与 PPT 内嵌的 Workbook1.xlsb 模板一致的布局，
-    目标是让图表系列（品牌）与数据列严格对齐，避免所有系列引用同一列导致映射错误。
-
-    最终布局（Series in columns）：
-    - 第1行：B1.. 为品牌名（与图例顺序一致）；A1留空。
-    - 第2..N行：A列为渠道名称（分类标签），B.. 为各品牌在该渠道的数值。
-    - 这样分类公式指向 Sheet1!$A$2:$A${N}，每个系列值公式指向 Sheet1!$<COL>$2:$<COL>${N}。
-
-    实现说明：
-    - 若 charts/p29/tmp/ppt_extracted/ppt/embeddings/Workbook1.xlsb 存在，可读取以了解模板形状，但以我们标准布局为准。
-    - 品牌顺序严格按照 config.filters.brands_display（与图例顺序一致）。
-    - 遵循 MVP 原则，仅写入所需的文本与数值，不引入复杂命名范围或样式。
-    """
-    labels = chart_data['bar_chart']['labels']
-    series_list = chart_data['bar_chart']['series']
+def assert_sheet1_layout(excel_path, config):
+    """校验 Excel 中的 Sheet1 是否为标准布局，否则抛错（不兜底）。"""
+    wb = openpyxl.load_workbook(excel_path, data_only=True)
+    if 'Sheet1' not in wb.sheetnames:
+        raise RuntimeError('Excel 缺少 Sheet1，请先运行 generate_excel.py 生成标准布局')
+    ws = wb['Sheet1']
     brands_display = config['filters']['brands_display']
+    channels = config['fill_policy']['channel_order']
 
-    # 1) 读取模板 xlsb 的列数（若可用）
-    template_xlsb = TMP_DIR / 'ppt_extracted' / 'ppt' / 'embeddings' / 'Workbook1.xlsb'
-    column_count = len(labels)  # 默认为渠道数
-    if template_xlsb.exists():
-        try:
-            # 用 pyxlsb 读取模板的 Sheet1 形状，取得列数
-            import pandas as pd
-            df = pd.read_excel(template_xlsb, sheet_name='Sheet1', engine='pyxlsb')
-            column_count = df.shape[1]
-        except Exception:
-            pass
+    # 检查表头品牌
+    for idx, brand in enumerate(brands_display, start=2):
+        val = ws.cell(row=1, column=idx).value
+        if str(val) != brand:
+            raise RuntimeError(f'Sheet1 表头第 {idx} 列应为 {brand}，实际为 {val}')
+    # 检查渠道行
+    for r_idx, channel in enumerate(channels, start=2):
+        val = ws.cell(row=r_idx, column=1).value
+        if str(val) != channel:
+            raise RuntimeError(f'Sheet1 第 {r_idx} 行渠道应为 {channel}，实际为 {val}')
+    return True
 
-    # 2) 以“列为品牌、行为渠道”的方式重写 Sheet1
-    wb = openpyxl.load_workbook(excel_path)
-    if 'Sheet1' in wb.sheetnames:
-        wb.remove(wb['Sheet1'])
-    ws = wb.create_sheet('Sheet1', 0)
+def update_right_total_sov_texts(extract_dir, pie_data, config):
+    """
+    填充右侧总体 SOV 文本标签：
+    - 在 slide1.xml 中寻找包含“%”的纯文本形状；按垂直位置自上而下排序；
+    - 依次写入 brands_display 顺序对应的整数百分比。
+    - 若未找到足够的候选形状则抛错（遵循“不兜底”原则）。
+    """
+    slides_dir = extract_dir / 'ppt' / 'slides'
+    target_slide = slides_dir / 'slide1.xml'
+    if not target_slide.exists():
+        raise FileNotFoundError(f'未找到 {target_slide}，无法填充右侧总体SOV文本')
 
-    # 写入表头：B1.. 为品牌名，并按配置着色以便核对
-    color_map = (config.get('filters') or {}).get('brand_colors') or {}
+    # 构建品牌 -> 百分比（整数）映射
+    brand_order = config['filters']['brands_display']
+    pct_map = {str(row['Brand']): int(row['Percentage']) for _, row in pie_data.iterrows()}
 
-    # 选择与底色形成足够反差的文字颜色（黑/白），提升可读性
-    def pick_contrast_font(hex_color: str) -> str:
-        """
-        输入类似 'FF0000' 的 RGB 十六进制，输出 ARGB 字符串：
-        - 亮色背景用黑字 'FF000000'
-        - 暗色背景用白字 'FFFFFFFF'
-        简化策略遵循 W3C 相对亮度计算，避免过度设计。
-        """
-        if not hex_color:
-            return 'FF000000'
-        hc = hex_color.strip().lstrip('#').upper()
-        if len(hc) == 8:  # 允许 ARGB，取后 6 位
-            hc = hc[-6:]
-        try:
-            r = int(hc[0:2], 16) / 255.0
-            g = int(hc[2:4], 16) / 255.0
-            b = int(hc[4:6], 16) / 255.0
-        except Exception:
-            return 'FF000000'
+    ns = {
+        'p': 'http://schemas.openxmlformats.org/presentationml/2006/main',
+        'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+    }
+    tree = etree.parse(str(target_slide))
+    root = tree.getroot()
 
-        def to_linear(c):
-            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    candidates = []
+    for sp in root.findall('.//p:sp', ns):
+        # 获取文本内容
+        texts = sp.findall('.//a:t', ns)
+        joined = ''.join([(t.text or '').strip() for t in texts])
+        if not joined:
+            continue
+        # 仅匹配形如 “23%” 的标签
+        if re.fullmatch(r"\d+%", joined):
+            off = sp.find('.//p:spPr/a:xfrm/a:off', ns)
+            y = int(off.get('y')) if off is not None and off.get('y') else 0
+            candidates.append((y, sp, texts))
 
-        L = 0.2126 * to_linear(r) + 0.7152 * to_linear(g) + 0.0722 * to_linear(b)
-        # 阈值 0.55 在深色蓝、青、红背景下能得到白字，在浅灰下得到黑字
-        return 'FFFFFFFF' if L < 0.55 else 'FF000000'
-    for b_idx, brand in enumerate(brands_display, start=2):
-        ws.cell(row=1, column=b_idx, value=brand)
-        # 统一底色：与柱状图系列颜色一致，便于人工比对
-        hex_color = color_map.get(brand) or color_map.get(brand.upper()) or color_map.get(brand.capitalize())
-        if hex_color:
-            from openpyxl.styles import PatternFill, Font
-            ws.cell(row=1, column=b_idx).fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type='solid')
-            ws.cell(row=1, column=b_idx).font = Font(color=pick_contrast_font(hex_color), bold=True)
+    if len(candidates) < len(brand_order):
+        raise RuntimeError(f'右侧文本候选仅 {len(candidates)} 个，少于品牌数量 {len(brand_order)}，无法安全填充')
 
-    # 建立品牌 -> 值序列映射
-    series_by_name = {s['name']: s['values'] for s in series_list}
+    candidates.sort(key=lambda x: x[0])  # 按 y 从上到下
+    for idx, brand in enumerate(brand_order):
+        pct = pct_map.get(brand, 0)
+        t_nodes = candidates[idx][2]
+        if not t_nodes:
+            raise RuntimeError('发现空文本节点，无法写入百分比')
+        t_nodes[0].text = f"{pct}%"
 
-    # 写入分类与数值：A列为渠道名称；B.. 为各品牌对应值
-    for r_idx, channel in enumerate(labels, start=2):
-        ws.cell(row=r_idx, column=1, value=channel)
-        for b_idx, brand in enumerate(brands_display, start=2):
-            vals = series_by_name.get(brand, [])
-            v = float(vals[r_idx - 2]) if len(vals) >= (r_idx - 1) else 0.0
-            ws.cell(row=r_idx, column=b_idx, value=v)
-            # 数值单元格底色与该列品牌色一致
-            hex_color = color_map.get(brand) or color_map.get(brand.upper()) or color_map.get(brand.capitalize())
-            if hex_color:
-                from openpyxl.styles import PatternFill, Font
-                ws.cell(row=r_idx, column=b_idx).fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type='solid')
-                ws.cell(row=r_idx, column=b_idx).font = Font(color=pick_contrast_font(hex_color))
-
-    wb.save(excel_path)
-    print(f"已按模板重构 Sheet1：{excel_path}（行: {len(labels)+1}，列: {len(brands_display)+1}）")
-    return excel_path
+    tree.write(str(target_slide), xml_declaration=True, encoding='UTF-8', standalone='yes')
+    print('已填充右侧总体SOV文本标签（slide1.xml）')
 
 def update_chart_xml_caches(extract_dir, chart_data):
     """
@@ -420,6 +406,254 @@ def update_chart_xml_caches(extract_dir, chart_data):
             print(f"  - {name}")
     else:
         print("未发现可更新的图表缓存（可能模板未包含 bar/pie 图表）")
+
+def normalize_bar_chart_data_labels(extract_dir, chart_data, config):
+    """
+    规范柱状图数据标签：
+    - 为每个系列设置 dLbls：显示数值、bestFit 位置、统一百分号格式（0%）。
+    - 移除模板中针对特定索引的 <c:dLbl><c:delete/> 标签，避免某些品牌在某些渠道不显示标签。
+    - 可选：按配置阈值（fill_policy.min_label_percent）为过小的值添加 delete，从而减少拥挤（默认 0，不隐藏）。
+
+    说明：仅影响显示，不改动数据；遵循不兜底原则，若配置未设阈值则不做隐藏。
+    """
+    charts_dir = extract_dir / 'ppt' / 'charts'
+    if not charts_dir.exists():
+        print('未找到 charts 目录，跳过数据标签规范')
+        return
+
+    ns = {
+        'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart',
+        'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+    }
+
+    # 从配置读取最小显示阈值（百分比整数），默认 0 表示不隐藏
+    min_label_percent = int(((config.get('fill_policy') or {}).get('min_label_percent') or 0))
+
+    # 建立 series 名 -> 数值序列 的映射，便于阈值判断
+    series_by_name = {s['name']: s['values'] for s in chart_data['bar_chart']['series']}
+
+    for chart_xml in charts_dir.glob('chart*.xml'):
+        try:
+            tree = etree.parse(str(chart_xml))
+            root = tree.getroot()
+            changed = False
+
+            for bar in root.findall('.//c:barChart', ns):
+                for ser in bar.findall('c:ser', ns):
+                    # 取系列名（优先 c:tx/c:strCache，其次 c:tx/c:v）
+                    brand_name = None
+                    tx_cache_v = ser.find('.//c:tx//c:strCache//c:pt//c:v', ns)
+                    if tx_cache_v is not None and (tx_cache_v.text or '').strip():
+                        brand_name = tx_cache_v.text.strip()
+                    else:
+                        tx_v = ser.find('.//c:tx//c:v', ns)
+                        if tx_v is not None and (tx_v.text or '').strip():
+                            brand_name = tx_v.text.strip()
+
+                    # 确保存在 dLbls
+                    dLbls = ser.find('c:dLbls', ns)
+                    if dLbls is None:
+                        dLbls = etree.SubElement(ser, f"{{{ns['c']}}}dLbls")
+
+                    # 清理针对索引的删除项，避免缺失标签
+                    for d in list(dLbls.findall('c:dLbl', ns)):
+                        del_el = d.find('c:delete', ns)
+                        if del_el is not None:
+                            dLbls.remove(d)
+                            changed = True
+
+                    # 统一设置显示选项与格式
+                    def ensure_child(parent, tag):
+                        el = parent.find(tag, ns)
+                        if el is None:
+                            el = etree.SubElement(parent, f"{{{ns['c']}}}{tag.split(':')[1]}")
+                        return el
+
+                    # dLblPos bestFit
+                    pos = dLbls.find('c:dLblPos', ns)
+                    if pos is None:
+                        pos = etree.SubElement(dLbls, f"{{{ns['c']}}}dLblPos")
+                    pos.set('val', 'bestFit')
+
+                    # showVal=1，其他保持关闭
+                    show_val = dLbls.find('c:showVal', ns)
+                    if show_val is None:
+                        show_val = etree.SubElement(dLbls, f"{{{ns['c']}}}showVal")
+                    show_val.set('val', '1')
+                    for tag in ['c:showLegendKey','c:showCatName','c:showSerName','c:showPercent','c:showBubbleSize']:
+                        el = dLbls.find(tag, ns)
+                        if el is None:
+                            el = etree.SubElement(dLbls, f"{{{ns['c']}}}{tag.split(':')[1]}")
+                        el.set('val', '0')
+
+                    # 百分比显示格式：将整数值按“数字+百分号”显示，而不进行 *100 的缩放。
+                    # Excel 的标准百分比格式 0% 会把 36 解释为 3600%，因此这里采用自定义格式 0\%，
+                    # 仅追加符号，不改变数值。
+                    num_fmt = dLbls.find('c:numFmt', ns)
+                    if num_fmt is None:
+                        num_fmt = etree.SubElement(dLbls, f"{{{ns['c']}}}numFmt")
+                    num_fmt.set('formatCode', '0\\%')
+                    num_fmt.set('sourceLinked', '0')
+                    changed = True
+
+                    # 统一设置数据标签字体颜色：默认白色；Apple 品牌统一为黑色。
+                    # 说明：遵循 MVP 原则保持简单，后续如需动态对比度再扩展。
+                    # Apple 设为黑色，其余默认白色
+                    label_color = '000000' if (brand_name == 'Apple') else 'FFFFFF'
+                    print(f"数据标签颜色: series='{brand_name}' -> {label_color}")
+                    txPr = dLbls.find('c:txPr', ns)
+                    if txPr is None:
+                        txPr = etree.SubElement(dLbls, f"{{{ns['c']}}}txPr")
+                        etree.SubElement(txPr, f"{{{ns['a']}}}bodyPr")
+                        etree.SubElement(txPr, f"{{{ns['a']}}}lstStyle")
+                        p = etree.SubElement(txPr, f"{{{ns['a']}}}p")
+                        # 追加段落属性并设置默认字符属性颜色（defRPr）
+                        pPr = etree.SubElement(p, f"{{{ns['a']}}}pPr")
+                        defRPr = etree.SubElement(pPr, f"{{{ns['a']}}}defRPr")
+                        solidFill_def = etree.SubElement(defRPr, f"{{{ns['a']}}}solidFill")
+                        srgb_def = etree.SubElement(solidFill_def, f"{{{ns['a']}}}srgbClr")
+                        srgb_def.set('val', label_color)
+                        r = etree.SubElement(p, f"{{{ns['a']}}}r")
+                        rPr = etree.SubElement(r, f"{{{ns['a']}}}rPr")
+                        # 设置填充为纯色 label_color（Apple 黑，其它白）
+                        solidFill = etree.SubElement(rPr, f"{{{ns['a']}}}solidFill")
+                        srgb = etree.SubElement(solidFill, f"{{{ns['a']}}}srgbClr")
+                        srgb.set('val', label_color)
+                        changed = True
+                        # 追加一个空文本节点，避免 r 无内容导致部分渲染器忽略 rPr
+                        etree.SubElement(r, f"{{{ns['a']}}}t").text = ''
+
+                        # 同步更新子级数据标签（c:dLbl）上的 txPr（模板可能包含），避免颜色被子级覆盖
+                        for d in dLbls.findall('c:dLbl', ns):
+                            txPr_child = d.find('c:txPr', ns)
+                            if txPr_child is None:
+                                continue
+                            # 子级 rPr 颜色
+                            p_child = txPr_child.find('a:p', ns)
+                            if p_child is None:
+                                p_child = etree.SubElement(txPr_child, f"{{{ns['a']}}}p")
+                            r_child = p_child.find('a:r', ns)
+                            if r_child is None:
+                                r_child = etree.SubElement(p_child, f"{{{ns['a']}}}r")
+                            rPr_child = r_child.find('a:rPr', ns)
+                            if rPr_child is None:
+                                rPr_child = etree.SubElement(r_child, f"{{{ns['a']}}}rPr")
+                            solid_child = rPr_child.find('a:solidFill', ns)
+                            if solid_child is None:
+                                solid_child = etree.SubElement(rPr_child, f"{{{ns['a']}}}solidFill")
+                            srgb_child = solid_child.find('a:srgbClr', ns)
+                            if srgb_child is None:
+                                srgb_child = etree.SubElement(solid_child, f"{{{ns['a']}}}srgbClr")
+                            srgb_child.set('val', label_color)
+                            # 子级 defRPr 颜色
+                            pPr_child = p_child.find('a:pPr', ns)
+                            if pPr_child is None:
+                                pPr_child = etree.SubElement(p_child, f"{{{ns['a']}}}pPr")
+                            defRPr_child = pPr_child.find('a:defRPr', ns)
+                            if defRPr_child is None:
+                                defRPr_child = etree.SubElement(pPr_child, f"{{{ns['a']}}}defRPr")
+                            solid_def_child = defRPr_child.find('a:solidFill', ns)
+                            if solid_def_child is None:
+                                solid_def_child = etree.SubElement(defRPr_child, f"{{{ns['a']}}}solidFill")
+                            srgb_def_child = solid_def_child.find('a:srgbClr', ns)
+                            if srgb_def_child is None:
+                                srgb_def_child = etree.SubElement(solid_def_child, f"{{{ns['a']}}}srgbClr")
+                            srgb_def_child.set('val', label_color)
+                            changed = True
+                    else:
+                        # 若已存在 txPr，确保存在 rPr 且颜色按规则设置
+                        p = txPr.find('a:p', ns)
+                        if p is None:
+                            p = etree.SubElement(txPr, f"{{{ns['a']}}}p")
+                        r = p.find('a:r', ns)
+                        if r is None:
+                            r = etree.SubElement(p, f"{{{ns['a']}}}r")
+                        rPr = r.find('a:rPr', ns)
+                        if rPr is None:
+                            rPr = etree.SubElement(r, f"{{{ns['a']}}}rPr")
+                        solidFill = rPr.find('a:solidFill', ns)
+                        if solidFill is None:
+                            solidFill = etree.SubElement(rPr, f"{{{ns['a']}}}solidFill")
+                        srgb = solidFill.find('a:srgbClr', ns)
+                        if srgb is None:
+                            srgb = etree.SubElement(solidFill, f"{{{ns['a']}}}srgbClr")
+                        srgb.set('val', label_color)
+                        changed = True
+                        # 同步更新默认字符属性 defRPr 的颜色，避免渲染器优先使用 defRPr
+                        pPr = p.find('a:pPr', ns)
+                        if pPr is None:
+                            pPr = etree.SubElement(p, f"{{{ns['a']}}}pPr")
+                        defRPr = pPr.find('a:defRPr', ns)
+                        if defRPr is None:
+                            defRPr = etree.SubElement(pPr, f"{{{ns['a']}}}defRPr")
+                        solidFill_def = defRPr.find('a:solidFill', ns)
+                        if solidFill_def is None:
+                            solidFill_def = etree.SubElement(defRPr, f"{{{ns['a']}}}solidFill")
+                        srgb_def = solidFill_def.find('a:srgbClr', ns)
+                        if srgb_def is None:
+                            srgb_def = etree.SubElement(solidFill_def, f"{{{ns['a']}}}srgbClr")
+                        srgb_def.set('val', label_color)
+                        changed = True
+
+                        # 同步更新子级数据标签（c:dLbl）上的 txPr（模板可能包含），避免颜色被子级覆盖
+                        for d in dLbls.findall('c:dLbl', ns):
+                            txPr_child = d.find('c:txPr', ns)
+                            if txPr_child is None:
+                                continue
+                            # 子级 rPr 颜色
+                            p_child = txPr_child.find('a:p', ns)
+                            if p_child is None:
+                                p_child = etree.SubElement(txPr_child, f"{{{ns['a']}}}p")
+                            r_child = p_child.find('a:r', ns)
+                            if r_child is None:
+                                r_child = etree.SubElement(p_child, f"{{{ns['a']}}}r")
+                            rPr_child = r_child.find('a:rPr', ns)
+                            if rPr_child is None:
+                                rPr_child = etree.SubElement(r_child, f"{{{ns['a']}}}rPr")
+                            solid_child = rPr_child.find('a:solidFill', ns)
+                            if solid_child is None:
+                                solid_child = etree.SubElement(rPr_child, f"{{{ns['a']}}}solidFill")
+                            srgb_child = solid_child.find('a:srgbClr', ns)
+                            if srgb_child is None:
+                                srgb_child = etree.SubElement(solid_child, f"{{{ns['a']}}}srgbClr")
+                            srgb_child.set('val', label_color)
+                            # 子级 defRPr 颜色
+                            pPr_child = p_child.find('a:pPr', ns)
+                            if pPr_child is None:
+                                pPr_child = etree.SubElement(p_child, f"{{{ns['a']}}}pPr")
+                            defRPr_child = pPr_child.find('a:defRPr', ns)
+                            if defRPr_child is None:
+                                defRPr_child = etree.SubElement(pPr_child, f"{{{ns['a']}}}defRPr")
+                            solid_def_child = defRPr_child.find('a:solidFill', ns)
+                            if solid_def_child is None:
+                                solid_def_child = etree.SubElement(defRPr_child, f"{{{ns['a']}}}solidFill")
+                            srgb_def_child = solid_def_child.find('a:srgbClr', ns)
+                            if srgb_def_child is None:
+                                srgb_def_child = etree.SubElement(solid_def_child, f"{{{ns['a']}}}srgbClr")
+                            srgb_def_child.set('val', label_color)
+                            changed = True
+
+                    # 可选：按阈值隐藏过小的标签（仅影响显示，不改动数据）
+                    if brand_name in series_by_name and min_label_percent > 0:
+                        values = series_by_name[brand_name]
+                        for idx, v in enumerate(values):
+                            try:
+                                if float(v) < float(min_label_percent):
+                                    d = etree.SubElement(dLbls, f"{{{ns['c']}}}dLbl")
+                                    i = etree.SubElement(d, f"{{{ns['c']}}}idx")
+                                    i.set('val', str(idx))
+                                    dele = etree.SubElement(d, f"{{{ns['c']}}}delete")
+                                    dele.set('val', '1')
+                                    changed = True
+                            except Exception:
+                                # 保守处理：解析失败不隐藏
+                                pass
+
+            if changed:
+                tree.write(str(chart_xml), xml_declaration=True, encoding='UTF-8', standalone='yes')
+                print(f"已规范数据标签：{chart_xml.name}")
+        except Exception as e:
+            print(f"规范数据标签失败 {chart_xml.name}：{e}")
 
 def update_embedded_excel_and_links(extract_dir, excel_path):
     """
@@ -815,9 +1049,9 @@ def main():
         print("正在读取Excel数据...")
         sov_data, pie_data = read_excel_data(excel_path)
         
-        # 准备图表数据
+        # 准备图表数据（柱状图优先从 Sheet1 读取）
         print("正在准备图表数据...")
-        chart_data = prepare_chart_data(sov_data, pie_data, config)
+        chart_data = prepare_chart_data(sov_data, pie_data, config, excel_path)
         
         # 更新JSON数据文件
         print("正在更新图表数据文件...")
@@ -827,9 +1061,9 @@ def main():
         print("正在解压PPT模板...")
         extract_dir = extract_ppt_template()
 
-        # 将 Excel 重塑为“编辑数据”友好结构（含命名范围）
-        print("正在重塑 Excel 编辑数据结构...")
-        reshape_excel_for_editing(excel_path, chart_data, config)
+        # 校验 Sheet1 布局（Sheet1 由 generate_excel.py 生成）
+        print("正在校验 Excel 的 Sheet1 布局...")
+        assert_sheet1_layout(excel_path, config)
 
         # 替换嵌入的工作簿并修正关系，启用自动更新
         print("正在替换嵌入工作簿并启用自动刷新...")
@@ -843,13 +1077,21 @@ def main():
         print("正在应用品牌颜色映射...")
         apply_brand_colors(extract_dir, config, excel_path)
 
+        # 先刷新 chart XML 缓存，确保系列名（c:tx/strCache）可用
+        print("正在刷新图表缓存数据...")
+        update_chart_xml_caches(extract_dir, chart_data)
+
+        # 规范柱状图数据标签，统一 bestFit 与百分号格式，并清理模板的删除项
+        print("正在规范柱状图数据标签样式...")
+        normalize_bar_chart_data_labels(extract_dir, chart_data, config)
+
+        # 填充右侧总体 SOV 文本标签（整数百分比）
+        print("正在填充右侧总体SOV文本标签...")
+        update_right_total_sov_texts(extract_dir, pie_data, config)
+
         # 移除 WPS 图表扩展，防止“编辑数据”时颜色被重置
         print("正在移除 WPS 图表扩展...")
         remove_wps_chart_extensions(extract_dir)
-
-        # 刷新 chart XML 缓存，避免打开后显示旧数据（尽力而为，若模板不含缓存节点则跳过）
-        print("正在刷新图表缓存数据...")
-        update_chart_xml_caches(extract_dir, chart_data)
         
         # 重新打包PPT
         output_dir = ROOT / 'output'
