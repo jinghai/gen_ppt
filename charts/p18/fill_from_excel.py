@@ -47,6 +47,8 @@ def _resolve_tmp_paths():
 NS = {
     'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart',
     'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+    # 为数据标签文本属性(txPr)提供 a 命名空间
+    'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
 }
 
 
@@ -140,6 +142,36 @@ def _update_chart_values(chart_xml_path: Path, values):
         numFmt = ET.SubElement(dLbls, '{%(c)s}numFmt' % NS)
     numFmt.set('formatCode', '0"%"')
     numFmt.set('sourceLinked', '0')
+    # 关键：为数据标签增加文本属性，禁用省略号和换行，避免显示为 "4..." 等
+    # 在 WPS/Office 渲染中，若继承了轴的 txPr(包含 vertOverflow="ellipsis")，会导致数据标签被省略。
+    txPr = dLbls.find('{%(c)s}txPr' % NS)
+    if txPr is None:
+        txPr = ET.SubElement(dLbls, '{%(c)s}txPr' % NS)
+    bodyPr = txPr.find('{%(a)s}bodyPr' % NS)
+    if bodyPr is None:
+        bodyPr = ET.SubElement(txPr, '{%(a)s}bodyPr' % NS)
+    # 明确设置文本渲染行为：不旋转、不换行、不省略，居中对齐
+    bodyPr.set('rot', '0')
+    bodyPr.set('spcFirstLastPara', '0')
+    bodyPr.set('vertOverflow', 'clip')
+    bodyPr.set('vert', 'horz')
+    bodyPr.set('wrap', 'none')
+    bodyPr.set('anchor', 'ctr')
+    bodyPr.set('anchorCtr', '1')
+    lstStyle = txPr.find('{%(a)s}lstStyle' % NS)
+    if lstStyle is None:
+        lstStyle = ET.SubElement(txPr, '{%(a)s}lstStyle' % NS)
+    p = txPr.find('{%(a)s}p' % NS)
+    if p is None:
+        p = ET.SubElement(txPr, '{%(a)s}p' % NS)
+    pPr = p.find('{%(a)s}pPr' % NS)
+    if pPr is None:
+        pPr = ET.SubElement(p, '{%(a)s}pPr' % NS)
+    defRPr = pPr.find('{%(a)s}defRPr' % NS)
+    if defRPr is None:
+        defRPr = ET.SubElement(pPr, '{%(a)s}defRPr' % NS)
+    # 保持语言为中文，字号沿用模板默认(不强制设置数值，避免样式突然变化)
+    defRPr.set('lang', 'zh-CN')
     # 系列级也显式开启标签，避免模板默认关闭
     for ser in list(line_chart.findall('{%(c)s}ser' % NS)):
         dLbls_ser = ser.find('{%(c)s}dLbls' % NS)
@@ -156,6 +188,33 @@ def _update_chart_values(chart_xml_path: Path, values):
             numFmt_ser = ET.SubElement(dLbls_ser, '{%(c)s}numFmt' % NS)
         numFmt_ser.set('formatCode', '0"%"')
         numFmt_ser.set('sourceLinked', '0')
+        # 系列级同样显式设置文本属性，避免继承导致省略
+        txPr_ser = dLbls_ser.find('{%(c)s}txPr' % NS)
+        if txPr_ser is None:
+            txPr_ser = ET.SubElement(dLbls_ser, '{%(c)s}txPr' % NS)
+        bodyPr_ser = txPr_ser.find('{%(a)s}bodyPr' % NS)
+        if bodyPr_ser is None:
+            bodyPr_ser = ET.SubElement(txPr_ser, '{%(a)s}bodyPr' % NS)
+        bodyPr_ser.set('rot', '0')
+        bodyPr_ser.set('spcFirstLastPara', '0')
+        bodyPr_ser.set('vertOverflow', 'clip')
+        bodyPr_ser.set('vert', 'horz')
+        bodyPr_ser.set('wrap', 'none')
+        bodyPr_ser.set('anchor', 'ctr')
+        bodyPr_ser.set('anchorCtr', '1')
+        lstStyle_ser = txPr_ser.find('{%(a)s}lstStyle' % NS)
+        if lstStyle_ser is None:
+            lstStyle_ser = ET.SubElement(txPr_ser, '{%(a)s}lstStyle' % NS)
+        p_ser = txPr_ser.find('{%(a)s}p' % NS)
+        if p_ser is None:
+            p_ser = ET.SubElement(txPr_ser, '{%(a)s}p' % NS)
+        pPr_ser = p_ser.find('{%(a)s}pPr' % NS)
+        if pPr_ser is None:
+            pPr_ser = ET.SubElement(p_ser, '{%(a)s}pPr' % NS)
+        defRPr_ser = pPr_ser.find('{%(a)s}defRPr' % NS)
+        if defRPr_ser is None:
+            defRPr_ser = ET.SubElement(pPr_ser, '{%(a)s}defRPr' % NS)
+        defRPr_ser.set('lang', 'zh-CN')
     _set_external_auto_update(ET.ElementTree(tree))
     chart_xml_path.write_bytes(ET.tostring(tree, xml_declaration=True, encoding='UTF-8', standalone='yes'))
 
