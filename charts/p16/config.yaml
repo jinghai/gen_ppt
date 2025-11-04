@@ -1,14 +1,96 @@
+# P16页面级配置 - 联想法国市场声量份额趋势
+project:
+  template_ppt: ./p16.pptx                    # PPT模板文件
+  output_dir: ./output                        # 输出目录
+  tmp_dir: ./tmp                              # 临时目录
+  final_ppt: ./output/p16-final.pptx          # 最终PPT文件
+
+# 数据源配置
+data_sources:
+  neticle_db: ../../input/neticle-v4-08.sqlite     # 舆情原始库
+  metrics_db: ../../input/metrics-v4-08.db         # 指标聚合库
+
+# 过滤条件 - 法国联想数据
+filters:
+  country_name: "France"                      # 国家名称
+  country_id: 39                              # 国家ID
+  brand_name: "lenovo"                        # 品牌名称(小写)
+  target_month: "2025-08"                     # 目标更新月份
+
+# 渠道映射配置
+channels:
+  Forum:
+    - forum
+    - forum_aggregator
+  Online News:
+    - article
+    - frontpage
+    - article_aggregator
+    - frontpage_aggregator
+    - comment
+    - comment_article
+  Blog:
+    - blog
+    - blog_aggregator
+    - comment_blog
+  X:
+    - twitter
+    - twitter_reply
+    - twitter_retweet
+    - twitter_quoted
+  Instagram:
+    - instagram
+    - instagram_post
+    - instagram_comment
+    - instagram_reply
+  YouTube:
+    - youtube
+    - video
+
+# 图表映射配置
+chart_mapping:
+  chart1:
+    file: chart1.xml
+    type: main_trend
+    description: "主趋势图 - 联想声量份额趋势"
+  chart2:
+    file: chart2.xml
+    type: channel_breakdown
+    description: "Forum渠道分解图"
+  chart3:
+    file: chart3.xml
+    type: channel_breakdown
+    description: "Online News渠道分解图"
+  chart4:
+    file: chart4.xml
+    type: channel_breakdown
+    description: "Blog渠道分解图"
+  chart5:
+    file: chart5.xml
+    type: channel_breakdown
+    description: "Instagram渠道分解图"
+  chart6:
+    file: chart6.xml
+    type: channel_breakdown
+    description: "YouTube渠道分解图"
+
+  chart7:
+    file: chart7.xml
+    type: channel_breakdown
+    description: "X渠道分解图"
+
+# 标签标注配置（仅保留自动标注，统一隐藏/删除所有手工百分比标签）
+label_mode:
+  auto_labels: true                          # 启用自动标签标注
+  auto_label_style: "p18_template"           # 自动标签样式参考p18模板
+  auto_label_settings:
+    font_size: 10                             # 字体大小
+    font_color: "000000"                      # 字体颜色（黑色）
+    position: "outside_end"                   # 标签位置
+    show_percentage: true                     # 显示百分比
+    show_value: false                         # 不显示数值
+    leader_lines: true                        # 显示引导线
+
+# 输出配置
 output:
-  replace_charts:
-  - chart23.xml
-  - chart22.xml
-  - chart21.xml
-  - chart17.xml
-  - chart18.xml
-  - chart19.xml
-  - chart20.xml
-  final_mode: updated
-fill_policy:
-  axis_day_base: 20300
-  keep_external_data: true
-  external_data_format: xlsx
+  excel_file: ./p16_data.xlsx                 # Excel数据文件（输出到页面目录）
