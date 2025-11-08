@@ -8,7 +8,7 @@ update:
 
 # 数据源配置（相对于P29目录的路径）
 data_sources:
-  neticle_db: ../../input/neticle-v4-08.sqlite   # 舆情原始库（Neticle 数据）
+  neticle_db: ../../input/neticle-v5-08-etl.sqlite   # 舆情原始库（Neticle 数据）
   metrics_db: ../../input/metrics-v4-08.db       # 指标聚合库（预计算指标）
 
 # 过滤器配置
@@ -88,4 +88,4 @@ output:
   replace_charts:
     - chart115.xml
   final_mode: updated
-  final_ppt: ./output/p29-final.pptx     # P29页面最终PPT输出路径
+  final_ppt: ./output/p29-final-etl.pptx     # P29页面最终PPT输出路径

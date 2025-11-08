@@ -79,7 +79,7 @@ charts/p29/
 │   ├── chart_data.json # 图表数据缓存
 │   └── ppt_extracted/  # PPT解压文件
 └── output/
-    └── p29-final.pptx  # 最终输出文件
+    └── <由 config.yaml 的 output.final_ppt 决定>  # 最终输出文件（当前为 output/p29-final-etl.pptx）
 ```
 
 ## 使用方法
@@ -102,7 +102,7 @@ python fill_from_excel.py
 ## 输出文件
 
 1. **p29_data.xlsx**: 包含图表数据的Excel文件
-2. **output/p29-final.pptx**: 最终的PowerPoint演示文件
+2. **最终PPT**: 由配置 `output.final_ppt` 决定（当前为 `output/p29-final-etl.pptx`）
 
 ## 数据验证
 

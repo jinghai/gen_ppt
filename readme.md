@@ -186,3 +186,23 @@ python>=3.9（内置sqlite3、zipfile、xml.etree.ElementTree）
 - 添加新渠道：在`config.yaml`的`channels`部分添加映射
 - 添加新图表：在`chart_mapping`中添加新的图表配置
 - 更新月份：调整`filters.target_month`
+
+## 提交与推送
+
+### 推送到 GitHub（origin）
+```bash
+./push.sh "chore: 更新说明或变更内容"
+```
+
+### 同时推送到 GitHub 与 Gitee（双远程）
+```bash
+./push_both.sh "chore: 双远程同步"
+```
+
+前置要求：
+- 已配置 GitHub 远程：`git remote add origin <github仓库地址>`
+- 已配置 Gitee 远程：`git remote add gitee <gitee仓库地址>`
+
+脚本行为说明：
+- 两个脚本都会在有变更时自动 `git add -A` 并 `git commit -m "消息"`，无变更则跳过提交。
+- `push_both.sh` 会严格校验两个远程是否已配置，未配置时直接报错退出，不进行兜底处理。

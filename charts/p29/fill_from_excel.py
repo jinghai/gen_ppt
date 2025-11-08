@@ -1024,6 +1024,26 @@ def repack_ppt(extract_dir, output_path):
     
     print(f"PPT文件已生成：{output_path}")
 
+def resolve_final_output_path(config):
+    """
+    解析最终PPT输出路径：
+    - 严格使用 config.yaml 中的 output.final_ppt
+    - 若为相对路径，则以 P29 页面目录为基准解析
+    - 缺失配置时直接抛错（不兜底）
+    """
+    if not isinstance(config, dict):
+        raise RuntimeError('配置对象非法，期望 dict')
+    output_cfg = config.get('output')
+    if not output_cfg or not isinstance(output_cfg, dict):
+        raise RuntimeError('config.yaml 缺少 output 节点，无法生成最终PPT')
+    final_ppt = output_cfg.get('final_ppt')
+    if not final_ppt:
+        raise RuntimeError('config.yaml 缺少 output.final_ppt，无法生成最终PPT')
+    final_path = Path(final_ppt)
+    if not final_path.is_absolute():
+        final_path = ROOT / final_ppt
+    return final_path
+
 def main():
     """主函数"""
     try:
@@ -1093,9 +1113,8 @@ def main():
         print("正在移除 WPS 图表扩展...")
         remove_wps_chart_extensions(extract_dir)
         
-        # 重新打包PPT
-        output_dir = ROOT / 'output'
-        output_path = output_dir / 'p29-final.pptx'
+        # 重新打包PPT（严格按配置的文件名与路径输出）
+        output_path = resolve_final_output_path(config)
         repack_ppt(extract_dir, output_path)
         
         print(f"\n✅ PPT文件生成成功：{output_path}")
