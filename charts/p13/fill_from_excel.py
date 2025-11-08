@@ -43,7 +43,10 @@ class P13PPTFiller:
         self.tmp_dir = self.page_dir / self.project.get('tmp_dir', 'tmp')
         self.output_dir = self.page_dir / self.project.get('output_dir', 'output')
         self.template_file = self.page_dir / self.project.get('template_file', 'p13.pptx')
-        self.excel_path = self.output_dir / self.output_cfg.get('excel_file_name', 'p13_data.xlsx')
+        # Excel 数据文件改为放置在页面目录，而非 output 子目录。
+        # 若配置未提供 excel_file_name，则使用默认文件名 'p13_data.xlsx'。
+        # 不做兜底到 output，避免掩盖生成路径错误；缺失时直接报错。
+        self.excel_path = self.page_dir / self.output_cfg.get('excel_file_name', 'p13_data.xlsx')
         self.final_pptx = self.output_dir / self.output_cfg.get('final_pptx_name', 'p13-final.pptx')
         self.embedded_name = self.fill_policy.get('embedded_workbook_name', 'Microsoft_Excel_Worksheet1.xlsx')
 
@@ -73,11 +76,16 @@ class P13PPTFiller:
 
         # 日志
         log_cfg = self.cfg.get('logging', {})
+        log_file = Path(log_cfg.get('file', str(self.page_dir / 'logs' / 'build.log')))
+        # 在初始化日志之前，确保日志目录存在；不做静默兜底，目录创建失败将抛出异常
+        if log_file.parent and not log_file.parent.exists():
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+
         logging.basicConfig(
             level=getattr(logging, log_cfg.get('level', 'INFO')),
             format=log_cfg.get('format', '%(asctime)s - %(levelname)s - %(message)s'),
             handlers=[
-                logging.FileHandler(log_cfg.get('file', str(self.page_dir / 'p13_build.log')), encoding='utf-8'),
+                logging.FileHandler(str(log_file), encoding='utf-8'),
                 logging.StreamHandler()
             ]
         )

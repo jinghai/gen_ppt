@@ -1,188 +1,94 @@
-# P16 项目 - 法国联想市场数据分析
+# P16 项目使用说明
 
 ## 项目概述
-
-P16项目专门用于生成法国联想品牌的市场声量分析报告，包括主趋势图表和渠道分解图表。项目从多个数据源提取数据，生成Excel数据文件，并自动填充到PowerPoint模板中。
+- 生成法国联想品牌的声量份额页面：主趋势 + 渠道分解。
+- 流程分为两步：先生成 `p16_data.xlsx`，再填充 `p16-final.pptx`。
+- 原则：严格报错、不兜底；禁止使用 HTTP 预览或下载；仅在页面根 `tmp` 目录生成临时文件。
 
 ## 项目结构
-
 ```
 charts/p16/
-├── config.yaml           # 项目配置文件
-├── generate_excel.py     # 数据提取和Excel生成脚本
-├── fill_from_excel.py    # PPT模板填充脚本
-├── build.py             # 主构建脚本
-├── output/              # 输出目录
-│   ├── p16_data.xlsx    # 生成的Excel数据文件
-│   └── p16-final.pptx   # 最终PPT文件
-├── tmp/                 # 临时文件目录
-└── README.md           # 项目文档
+├── config.yaml            # 页面级配置
+├── generate_excel.py      # 生成 Excel（解压模板到 tmp，读取模板与数据库数据）
+├── fill_from_excel.py     # 填充 PPT（使用 tmp/ppt 内容，更新图表与标签）
+├── p16.pptx               # 模板文件
+├── p16_data.xlsx          # 生成的 Excel（位于页面根）
+├── output/                # 输出目录（最终 PPT）
+├── tmp/                   # 临时解压目录（保留用于排查）
+└── p16-图表解释.md        # 页面视觉与数据含义说明
 ```
 
-## 数据源
-
-### 1. metrics-v4-08.db
-- **表**: `brand_metrics_month`
-- **用途**: 提供月度品牌指标数据
-- **关键字段**: `countryId`, `brandId`, `month`, `sov`
-
-### 2. neticle-v4-08.sqlite
-- **表**: `mentions_wide`
-- **用途**: 提供原始提及数据，用于渠道分解分析
-- **关键字段**: `countryId`, `brandId`, `sourceLabel`, `month`, `mentions`
-
-## 配置说明
-
-### config.yaml 主要配置项
-
-```yaml
-project:
-  name: "p16"
-  description: "法国联想市场数据分析"
-
-data_sources:
-  neticle_db: "../../data/neticle-v4-08.sqlite"
-  metrics_db: "../../data/metrics-v4-08.db"
-
-filters:
-  country: "France"
-  country_id: 39
-  brand: "lenovo"
-  brand_id: 1
-
-channels:
-  Forum: ["forum"]
-  Online News: ["article", "frontpage"]
-  Blog: ["blog"]
-  X: ["twitter"]
-  Instagram: ["instagram"]
-  YouTube: ["video"]
-
-chart_mapping:
-  main_trend:
-    file: "chart23"
-    type: "line"
-    description: "主趋势图表"
-  forum:
-    file: "chart22"
-    type: "line"
-    description: "论坛渠道趋势"
-  # ... 其他图表映射
-
-time_ranges:
-  main_trend:
-    start_month: "2025-03"
-    end_month: "2025-08"
-  channel_breakdown:
-    start_month: "2025-05"
-    end_month: "2025-08"
-```
-
-## 使用方法
-
-### 1. 构建完整报告
+## 依赖安装（严格管理包依赖）
+- Python 3.9+
+- 安装：
 ```bash
-python build.py build
+pip install pandas openpyxl lxml pyyaml pyxlsb
 ```
+> 注：`pyxlsb` 仅在模板图表链接到嵌入工作簿 `.xlsb` 时需要；缺失时会明确报错。
 
-### 2. 清理临时文件
-```bash
-python build.py clean
-```
-
-### 3. 查看帮助
-```bash
-python build.py help
-```
-
-### 4. 单独运行组件
-
-#### 生成Excel数据文件
+## 快速开始
+1) 生成 Excel 并解压模板到 `tmp`：
 ```bash
 python generate_excel.py
 ```
+输出：页面根 `./p16_data.xlsx`；并在 `./tmp` 下解压出 `ppt/charts`、`ppt/embeddings` 等。
 
-#### 填充PPT模板
+2) 填充 PPT（需要 `tmp/ppt` 已存在）：
 ```bash
 python fill_from_excel.py
 ```
+输出：`./output/p16-final.pptx`。`tmp` 目录将保留用于排查。
 
-## 输出文件
+## 配置说明（与实现一致）
+```yaml
+project:
+  template_ppt: ./p16.pptx
+  output_dir: ./output
+  tmp_dir: ./tmp
+  final_ppt: ./output/p16-final.pptx
 
-### 1. p16_data.xlsx
-包含三个工作表：
-- **main_trend**: 主趋势数据（月份、SOV百分比）
-- **channel_breakdown**: 渠道分解数据（月份、渠道、SOV百分比）
-- **summary**: 数据摘要信息
+data_sources:
+  neticle_db: ../../input/neticle-v4-08.sqlite
+  metrics_db: ../../input/metrics-v4-08.db
 
-### 2. p16-final.pptx
-基于模板生成的最终PowerPoint演示文稿，包含更新的图表数据。
+filters:
+  country_name: "France"
+  country_id: 39
+  brand_name: "lenovo"
+  target_month: "2025-08"
 
-## 数据计算逻辑
+channels: {Forum, Online News, Blog, X, Instagram, YouTube}
 
-### SOV (Share of Voice) 计算
-```
-SOV = (品牌提及数 / 总提及数) × 100%
-```
+chart_mapping:
+  chart1: {file: chart1.xml, type: main_trend}
+  chart2..chart7: {type: channel_breakdown}
 
-### 渠道SOV计算
-1. 根据`sourceLabel`映射到对应渠道
-2. 按渠道聚合提及数
-3. 计算每个渠道的SOV百分比
-
-### 数据填充策略
-- **真实数据**: 从数据库中提取的实际数据
-- **模板数据**: 当数据库中缺少数据时，使用配置文件中的模板值
-- **缺失处理**: 未映射的渠道将被过滤掉
-
-### 图表显示策略
-- 默认禁用自动数据标签（不显示数值标签），以保证视觉简洁
-- 保留`numCache`百分比格式（`0%`），并开启`externalData.autoUpdate=1`，确保打开PPT时自动刷新嵌入数据
-
-## 依赖要求
-
-```python
-pandas>=1.5.0
-sqlite3 (内置)
-openpyxl>=3.0.0
-zipfile (内置)
-xml.etree.ElementTree (内置)
+label_mode:
+  auto_labels: true
+  auto_label_settings: {font_size: 10, position: outside_end}
 ```
 
-## 错误处理
+## 数据与图表策略
+- 主趋势：覆盖 `numCache/strCache` 并写入嵌入工作簿；启用 `externalData.autoUpdate=1` 与百分比 `0%` 格式；标签位置为上方。
+- 渠道分解：同主趋势；移除数值轴固定 `min/max`，由数据自动缩放到小数比例。
+- 标签策略：
+  - 删除所有手工百分比标签节点（`slide1.xml` 中文本匹配 `\d+%` 的形状）后，再启用自动标签，避免重复。
+  - 统一图表级与系列级标签：显示数值（百分比）、禁用类别/系列名与引导线、位置上方。
+- 内容类型声明：更新 `[Content_Types].xml`，为 `ppt/embeddings/*.xlsx` 添加 `<Override>`，确保首次打开即识别为工作簿。
 
-### 常见问题及解决方案
+## 常见错误（严格报错，不兜底）
+- 缺少 `tmp/ppt/charts` 或 `tmp/ppt/embeddings`：请先运行 `generate_excel.py`，或检查模板是否存在。
+- `p16_data.xlsx` 不存在或表缺失：检查第 1 步是否执行成功；日志会给出具体原因。
+- 嵌入工作簿读取失败或缺少 `pyxlsb`：安装依赖或检查模板是否链接到 `.xlsb`。
+- 月份标签无法识别：确保配置 `target_month` 有效，或修正模板类别标签（支持 `May '25`、`Aug 2025` 等常见格式）。
+- 所有输出均为模板值（未覆盖任何 computed）：脚本将报错，请检查品牌与月份过滤是否匹配数据库。
 
-1. **数据库连接失败**
-   - 检查数据库文件路径是否正确
-   - 确认数据库文件存在且可读
+## 目录与文件规范
+- 临时文件仅在页面根 `tmp` 目录；不得随处生成临时文件。
+- Excel 输出位于页面根：`./p16_data.xlsx`（相对路径时忽略子目录）。
+- 最终 PPT 位于 `./output/p16-final.pptx`。
 
-2. **图表文件未找到**
-   - 这是正常现象，脚本会继续处理其他部分
-   - 确保PPT模板包含正确的图表文件
-
-3. **配置文件错误**
-   - 检查YAML语法是否正确
-   - 确认所有必需的配置项都已设置
-
-## 开发说明
-
-### 代码结构
-- **generate_excel.py**: 数据提取和Excel生成逻辑
-- **fill_from_excel.py**: PPT模板处理和数据填充
-- **build.py**: 主控制脚本，整合所有流程
-
-### 扩展指南
-1. 添加新渠道：在`config.yaml`的`channels`部分添加映射
-2. 修改时间范围：更新`time_ranges`配置
-3. 添加新图表：在`chart_mapping`中添加新的图表配置
-
-## 版本历史
-
-- **v1.0**: 初始版本，支持基本的数据提取和PPT生成
-- **v1.1**: 优化渠道映射逻辑，改进错误处理
-- **v1.2**: 添加数据验证和清理功能
-
-## 联系信息
-
-如有问题或建议，请联系开发团队。
+## 验收清单
+- `summary` 工作表中 `computed条数 > 0`。
+- 打开 `p16-final.pptx` 即显示最新数据与自动标签；页面不再出现手工百分比标签。
+- 日志仅包含明确的错误与信息级提示，无兜底或静默忽略。

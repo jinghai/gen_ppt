@@ -60,9 +60,11 @@ class P13DataGenerator:
 
         # 路径
         self.tmp_dir = os.path.join(self.page_root, self.project.get('tmp_dir', 'tmp'))
-        self.output_dir = os.path.join(self.page_root, self.project.get('output_dir', 'output'))
-        self.excel_file_name = self.output_cfg.get('excel_file_name', 'p13_data.xlsx')
-        self.excel_file_path = os.path.join(self.output_dir, self.excel_file_name)
+        # 输出固定到页面目录，避免 output 子目录；要求配置提供 excel_file_name
+        if 'excel_file_name' not in self.output_cfg:
+            raise KeyError('config.output.excel_file_name 未配置')
+        self.excel_file_name = self.output_cfg['excel_file_name']
+        self.excel_file_path = os.path.join(self.page_root, self.excel_file_name)
 
         # 颜色与阈值
         self.labels = self.sentiment.get('labels', ['Positive', 'Neutral', 'Negative'])
@@ -80,8 +82,8 @@ class P13DataGenerator:
 
     # ---------- 基础工具 ----------
     def _ensure_dirs(self):
+        # 仅确保 tmp 目录存在；不再创建 output 子目录
         os.makedirs(self.tmp_dir, exist_ok=True)
-        os.makedirs(self.output_dir, exist_ok=True)
 
     def _to_date(self, s) -> dt.date:
         """将配置中的日期值统一为 date。

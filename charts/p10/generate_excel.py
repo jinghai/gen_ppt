@@ -36,11 +36,23 @@ class P10DataGenerator:
     def _setup_logging(self):
         """设置日志配置"""
         log_config = self.config.get('logging', {})
+        # 统一日志输出到 charts/p10/logs，并确保目录存在
+        # 若配置提供绝对/相对路径，优先使用配置；否则默认 logs/build.log
+        log_file = log_config.get('file', 'logs/build.log')
+        log_path = Path(log_file)
+        try:
+            # 创建父目录（避免因目录不存在导致日志写入失败）
+            if log_path.parent and str(log_path.parent) != '.':
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            # 严格报错：不做兜底，避免掩盖日志问题
+            raise RuntimeError(f"创建日志目录失败: {log_path.parent} -> {e}")
+
         logging.basicConfig(
             level=getattr(logging, log_config.get('level', 'INFO')),
             format=log_config.get('format', '%(asctime)s - %(levelname)s - %(message)s'),
             handlers=[
-                logging.FileHandler(log_config.get('file', 'p10_build.log'), encoding='utf-8'),
+                logging.FileHandler(str(log_path), encoding='utf-8'),
                 logging.StreamHandler()
             ]
         )
@@ -214,7 +226,12 @@ class P10DataGenerator:
         """保存数据到Excel文件"""
         self.logger.info("保存数据到Excel文件...")
         
-        output_file = self.config['output']['excel_file']
+        # 将生成的 Excel 固定写到页面目录，避免写入 output 子目录。
+        # 若配置为绝对路径，则尊重配置；若为相对路径，则仅取文件名并落到页面目录。
+        page_dir = Path(__file__).resolve().parent
+        cfg_output = self.config['output']['excel_file']
+        p = Path(cfg_output)
+        output_file = str(p if p.is_absolute() else (page_dir / p.name))
         
         try:
             with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
@@ -276,10 +293,6 @@ def main():
     # 确保在正确的目录下运行
     script_dir = Path(__file__).parent
     os.chdir(script_dir)
-    
-    # 创建输出目录
-    output_dir = Path("output")
-    output_dir.mkdir(exist_ok=True)
     
     # 运行数据生成器
     generator = P10DataGenerator()

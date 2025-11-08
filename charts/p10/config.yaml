@@ -69,5 +69,5 @@ quality:
 # 日志配置  
 logging:
   level: "INFO"
-  file: "p10_build.log"
+  file: "logs/build.log"
   format: "%(asctime)s - %(levelname)s - %(message)s"

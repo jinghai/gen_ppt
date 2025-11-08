@@ -43,11 +43,23 @@ class P10PPTFiller:
     def _setup_logging(self):
         """设置日志配置"""
         log_config = self.config.get('logging', {})
+        # 统一日志输出到 charts/p10/logs，并确保目录存在
+        # 若配置提供绝对/相对路径，优先使用配置；否则默认 logs/build.log
+        log_file = log_config.get('file', 'logs/build.log')
+        log_path = Path(log_file)
+        try:
+            # 创建父目录（避免因目录不存在导致日志写入失败）
+            if log_path.parent and str(log_path.parent) != '.':
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            # 严格报错：不做兜底，避免掩盖日志问题
+            raise RuntimeError(f"创建日志目录失败: {log_path.parent} -> {e}")
+
         logging.basicConfig(
             level=getattr(logging, log_config.get('level', 'INFO')),
             format=log_config.get('format', '%(asctime)s - %(levelname)s - %(message)s'),
             handlers=[
-                logging.FileHandler(log_config.get('file', 'p10_build.log'), encoding='utf-8'),
+                logging.FileHandler(str(log_path), encoding='utf-8'),
                 logging.StreamHandler()
             ]
         )
@@ -126,6 +138,61 @@ class P10PPTFiller:
             
         except Exception as e:
             self.logger.error(f"创建嵌入式工作簿失败: {e}")
+            raise
+
+    def _update_content_types(self, extracted_dir: Path, workbook_path: Path):
+        """更新 [Content_Types].xml 以声明嵌入的 xlsx 工作簿
+        - 添加 Default 映射：xlsx -> application/vnd.openxmlformats-officedocument.spreadsheetml.sheet（若缺失）
+        - 移除 embeddings 下旧的 .xlsb 覆盖项（避免冲突）
+        - 添加 embeddings/{workbook}.xlsx 的 Override 覆盖项（若缺失）
+        严格错误策略：缺少 Content_Types.xml 时直接抛错。
+        """
+        ct_file = extracted_dir / '[Content_Types].xml'
+        if not ct_file.exists():
+            raise FileNotFoundError(f"缺少 Content_Types.xml: {ct_file}")
+
+        try:
+            tree = ET.parse(ct_file)
+            root = tree.getroot()
+            ns_ct = 'http://schemas.openxmlformats.org/package/2006/content-types'
+
+            # 1) Default 映射检查/添加
+            has_default_xlsx = any(
+                (d.get('Extension') == 'xlsx')
+                for d in root.findall(f'{{{ns_ct}}}Default')
+            )
+            if not has_default_xlsx:
+                ET.SubElement(
+                    root,
+                    f'{{{ns_ct}}}Default',
+                    Extension='xlsx',
+                    ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
+
+            # 2) 清理 embeddings 下旧 .xlsb 覆盖项
+            for o in list(root.findall(f'{{{ns_ct}}}Override')):
+                part = o.get('PartName') or ''
+                if part.startswith('/ppt/embeddings/') and part.endswith('.xlsb'):
+                    root.remove(o)
+
+            # 3) 添加当前 xlsx 覆盖项（若不存在）
+            target_part = f'/ppt/embeddings/{workbook_path.name}'
+            has_xlsx_override = any(
+                (o.get('PartName') == target_part)
+                for o in root.findall(f'{{{ns_ct}}}Override')
+            )
+            if not has_xlsx_override:
+                ET.SubElement(
+                    root,
+                    f'{{{ns_ct}}}Override',
+                    PartName=target_part,
+                    ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
+
+            tree.write(ct_file, encoding='utf-8', xml_declaration=True)
+            self.logger.info('Content_Types.xml 已更新')
+        except Exception as e:
+            self.logger.error(f'更新 Content_Types 失败: {e}')
             raise
             
     def _update_chart_data_xml(self, extracted_dir, chart_name, data_df, chart_type="pie"):
@@ -423,15 +490,16 @@ class P10PPTFiller:
         self.logger.info(f"更新散点图颜色: {sentiment} -> {target_color}")
 
     def _update_chart_rels(self, extracted_dir, workbook_path):
-        """更新图表关系文件，指向新嵌入工作簿"""
+        """更新图表关系文件，指向新嵌入工作簿
+        严格错误策略：若关系文件缺失则抛出 FileNotFoundError。
+        """
         try:
             target = f"../embeddings/{Path(workbook_path).name}"
             rels_dir = extracted_dir / 'ppt' / 'charts' / '_rels'
             for chart_name in self.config['output']['replace_charts']:
                 rels_file = rels_dir / f"{chart_name}.rels"
                 if not rels_file.exists():
-                    self.logger.warning(f"未找到关系文件: {rels_file}")
-                    continue
+                    raise FileNotFoundError(f"未找到关系文件: {rels_file}")
                 try:
                     tree = ET.parse(rels_file)
                     root = tree.getroot()
@@ -444,7 +512,8 @@ class P10PPTFiller:
                     tree.write(rels_file, encoding='utf-8', xml_declaration=True)
                     self.logger.info(f"关系已更新: {rels_file} -> {target}")
                 except Exception as e:
-                    self.logger.warning(f"更新关系失败 {rels_file}: {e}")
+                    self.logger.error(f"更新关系失败 {rels_file}: {e}")
+                    raise
             return True
         except Exception as e:
             self.logger.error(f"更新图表关系失败: {e}")
@@ -489,6 +558,8 @@ class P10PPTFiller:
             # 4.1 更新关系文件到新工作簿（保留外部数据引用）
             if self.config.get('fill_policy', {}).get('keep_external_data', True):
                 self._update_chart_rels(extracted_dir, workbook_path)
+                # 4.2 更新 Content_Types，声明新嵌入的 xlsx
+                self._update_content_types(extracted_dir, workbook_path)
             
             # 5. 更新图表数据XML
             replace_charts = self.config['output']['replace_charts']

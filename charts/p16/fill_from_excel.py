@@ -10,10 +10,8 @@ import sys
 import yaml
 import pandas as pd
 import zipfile
-import shutil
 import xml.etree.ElementTree as ET
 from openpyxl import Workbook, load_workbook
-from datetime import datetime
 import logging
 
 # 设置日志
@@ -326,73 +324,6 @@ class P16PPTFiller:
             return value
         return v/100.0 if v > 1 else v
 
-    def _update_manual_percent_labels(self, root, namespaces, values, channel_name=None):
-        """更新手工百分比标签，确保首次打开PPT即显示最新值。
-        
-        关键功能：
-        1. 遍历 slide1.xml 形状，识别文本中含有数字+百分号的标签
-        2. 根据数据值更新标签文本，确保显示最新百分比
-        3. 保存修改，确保首次打开PPT显示正确的手工百分比标签
-        """
-        updated = 0
-        
-        # 获取幻灯片文件路径
-        slide_path = os.path.join(self.tmp_dir, 'ppt', 'slides', 'slide1.xml')
-        if not os.path.exists(slide_path):
-            # 严格错误处理：文件缺失直接报错，避免掩盖问题
-            raise FileNotFoundError(f"幻灯片文件不存在: {slide_path}")
-        
-        # 解析幻灯片文件
-        try:
-            slide_tree = ET.parse(slide_path)
-            slide_root = slide_tree.getroot()
-            
-            # 定义幻灯片命名空间 - 使用实际的命名空间前缀
-            slide_ns = {
-                'ns0': 'http://schemas.openxmlformats.org/presentationml/2006/main',
-                'ns1': 'http://schemas.openxmlformats.org/drawingml/2006/main'
-            }
-            
-            import re
-            # 遍历所有形状，识别含手工百分比的文本
-            for sp in list(slide_root.findall('.//ns0:sp', slide_ns)):
-                texts = sp.findall('.//ns1:t', slide_ns)
-                joined = ''.join([(t.text or '').strip() for t in texts])
-                if re.search(r"\d+%", joined):
-                    # 根据数据值更新标签文本，确保首次打开显示最新值
-                    if values and len(values) > 0:
-                        # 使用最新数据点更新标签
-                        latest_value = values[-1]  # 获取最新数据点
-                        percentage = latest_value * 100  # 转换为百分比
-                        
-                        # 更新文本内容
-                        for t in texts:
-                            t.text = f"{percentage:.1f}%"
-                        
-                        # 确保形状可见
-                        nvSpPr = sp.find('ns0:nvSpPr', slide_ns)
-                        if nvSpPr is not None:
-                            cNvPr = nvSpPr.find('ns0:cNvPr', slide_ns)
-                            if cNvPr is not None:
-                                # 移除隐藏属性，确保首次打开即显示
-                                if 'hidden' in cNvPr.attrib:
-                                    del cNvPr.attrib['hidden']
-                        
-                        updated += 1
-                        logger.debug(f"更新手工百分比标签: {percentage:.1f}%，确保首次打开显示最新值")
-            
-            # 保存修改后的幻灯片文件
-            slide_tree.write(slide_path, encoding='UTF-8', xml_declaration=True)
-            
-        except Exception as e:
-            logger.error(f"更新幻灯片手工标签失败: {e}")
-            raise
-        
-        if updated:
-            logger.debug(f"成功更新 {updated} 个手工百分比标签，确保首次打开即显示最新值")
-        else:
-            logger.debug("未发现手工百分比标签，无需更新")
-    
     def _remove_manual_percent_labels(self):
         """删除 slide1.xml 中所有手工百分比标签，避免与自动标签重复。
         
@@ -604,98 +535,13 @@ class P16PPTFiller:
         
         logger.debug("自动标签配置完成，确保首次打开即显示正确标签")
     
-    def _extract_channel_from_shape_name(self, shape_name):
-        """从形状名称中提取渠道名称。
-        
-        形状名称格式示例：
-        - "Google Shape;501;p16" -> "Google"
-        - "Forum Shape;502;p16" -> "Forum"
-        - "Online News Shape;503;p16" -> "Online News"
-        """
-        if not shape_name:
-            return None
-        
-        # 尝试从形状名称中提取渠道名称
-        import re
-        
-        # 匹配模式：渠道名称 + " Shape"
-        pattern = r'^(.+?) Shape'
-        match = re.match(pattern, shape_name)
-        if match:
-            return match.group(1).strip()
-        
-        return None
     
-    def _identify_channel_by_position(self, x, y):
-        """根据标签的X和Y坐标识别渠道。
-        
-        根据分析，标签按X坐标分为3个大组，每个大组包含2个渠道：
-        - 第一组 (X: 2574925-4175125): 包含2个渠道
-        - 第二组 (X: 5187950-6572250): 包含2个渠道  
-        - 第三组 (X: 7585075-9236075): 包含2个渠道
-        
-        每个渠道有4个月份数据，按Y坐标分组。
-        """
-        # 从配置中获取手工标签位置设置
-        manual_config = self.config.get('label_mode', {}).get('manual_label_positions', {})
-        y_tolerance = manual_config.get('y_tolerance', 200000)
-        
-        # 定义渠道位置映射（基于实际标签分布和配置）
-        channel_positions = {
-            # 第一组 (X: 2574925-4175125)
-            (manual_config.get('x_group1', {}).get('min_x', 2574925), 
-             manual_config.get('x_group1', {}).get('max_x', 4175125), 4250000): 'Forum',        # Y≈4250000附近的标签
-            (manual_config.get('x_group1', {}).get('min_x', 2574925), 
-             manual_config.get('x_group1', {}).get('max_x', 4175125), 4900000): 'Online News',   # Y≈4900000附近的标签（中间层）
-            (manual_config.get('x_group1', {}).get('min_x', 2574925), 
-             manual_config.get('x_group1', {}).get('max_x', 4175125), 5150000): 'Online News',   # Y≈5150000附近的标签
-            
-            # 第二组 (X: 5187950-6572250)  
-            (manual_config.get('x_group2', {}).get('min_x', 5187950), 
-             manual_config.get('x_group2', {}).get('max_x', 6572250), 4270000): 'Blog',          # Y≈4270000附近的标签
-            (manual_config.get('x_group2', {}).get('min_x', 5187950), 
-             manual_config.get('x_group2', {}).get('max_x', 6572250), 5150000): 'Instagram',      # Y≈5150000附近的标签
-            
-            # 第三组 (X: 7585075-9236075)
-            (manual_config.get('x_group3', {}).get('min_x', 7585075), 
-             manual_config.get('x_group3', {}).get('max_x', 9236075), 4270000): 'YouTube',       # Y≈4270000附近的标签
-            (manual_config.get('x_group3', {}).get('min_x', 7585075), 
-             manual_config.get('x_group3', {}).get('max_x', 9236075), 5150000): 'X'              # Y≈5150000附近的标签
-        }
-        
-        # 检查每个渠道的位置范围
-        for (x_min, x_max, y_target), channel in channel_positions.items():
-            if x_min <= x <= x_max and abs(y - y_target) <= y_tolerance:  # 使用配置中的Y坐标偏差
-                return channel
-        
-        return None
-    
-    def _calculate_label_position(self, value):
-        """根据数据值计算标签位置，确保标签位于数据点上方。
-        
-        位置计算逻辑：
-        - 值越大，标签位置越高（避免重叠）
-        - 基础位置为数据点上方（负值表示上方）
-        - 根据数值动态调整垂直位置
-        """
-        # 基础偏移量（数据点上方）
-        base_offset = -0.1
-        
-        # 根据数值调整位置（值越大，位置越高）
-        # 使用负值，这样值越大时位置越高（更负）
-        value_factor = value * 0.3
-        
-        # 计算最终位置：值越大，位置越高（更负）
-        position = base_offset - value_factor
-        
-        # 确保位置在合理范围内
-        return max(-0.8, min(-0.05, position))
 
     def _remove_point_label_overrides(self, root, namespaces):
         """清理点级标签覆写，避免显示系列名/类目名造成拥挤。
 
         删除所有 c:ser/c:dPt 下的 c:dLbls，使标签仅由系列级或图表级控制。
-        保留含有百分号（'%'）的手工标签，后续通过_update_manual_percent_labels方法更新数值。
+        手工标签逻辑已移除，统一采用自动标签策略。
         """
         removed = 0
         
@@ -706,14 +552,13 @@ class P16PPTFiller:
                 dpt.remove(dlbls)
                 removed += 1
         
-        # 2. 不再删除含有百分号的手工标签，改为保留用于后续更新
-        # 手工百分比标签将在_update_manual_percent_labels方法中更新数值和位置
+        # 2. 统一使用自动标签，手工标签在 _configure_auto_labels 中被清理
         
         if removed:
             logger.debug(f"移除 {removed} 个点级标签覆写")
         logger.debug("保留手工百分比标签，将在后续步骤中更新数值")
 
-    def _configure_external_update_and_labels(self, root, namespaces):
+    def _configure_external_update_and_labels(self, root, namespaces, chart_path: str):
         """重写外部数据刷新与数据标签配置，确保首次打开PPT即显示最新值。
         
         关键改进：
@@ -728,17 +573,49 @@ class P16PPTFiller:
         
         # 1. 强制启用外部数据自动刷新
         external_data = root.find('.//c:externalData', namespaces)
+        # 先解析关系文件以获取正确的 r:id
+        rels_dir = os.path.join(os.path.dirname(chart_path), '_rels')
+        rels_file = os.path.join(rels_dir, os.path.basename(chart_path) + '.rels')
+        if not os.path.exists(rels_file):
+            raise FileNotFoundError(f"缺少图表关系文件: {rels_file}")
+        try:
+            rels_tree = ET.parse(rels_file)
+            rels_root = rels_tree.getroot()
+            correct_rel_id = None
+            for rel in rels_root.findall('.//{http://schemas.openxmlformats.org/package/2006/relationships}Relationship'):
+                if rel.get('Type') == 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/package':
+                    correct_rel_id = rel.get('Id')
+                    break
+            if not correct_rel_id:
+                raise RuntimeError(f"关系文件中未找到嵌入工作簿关系: {rels_file}")
+        except Exception as e:
+            raise RuntimeError(f"解析图表关系文件失败: {e}")
+
         if external_data is None:
             # 创建外部数据节点
             chart_space = root.find('.//c:chartSpace', namespaces)
             if chart_space is None:
                 raise RuntimeError('缺少 c:chartSpace 节点，无法创建外部数据连接')
             external_data = ET.SubElement(chart_space, f"{{{namespaces['c']}}}externalData")
-            # 添加关系ID（假设关系已存在，否则需要创建）
-            external_data.set('r:id', 'rId1')
+        # 设置/纠正 externalData 的 r:id 与关系文件一致
+        external_data.set('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id', correct_rel_id)
         
-        # 强制设置自动刷新
-        external_data.set('autoUpdate', '1')
+        # 强制设置自动刷新：使用 c:autoUpdate 子元素，移除非法属性
+        # 说明：c:externalData 不支持 autoUpdate 属性，必须通过子元素配置
+        auto_update = external_data.find('c:autoUpdate', namespaces)
+        if auto_update is None:
+            auto_update = ET.SubElement(external_data, f"{{{namespaces['c']}}}autoUpdate")
+        auto_update.set('val', '1')
+        if 'autoUpdate' in external_data.attrib:
+            del external_data.attrib['autoUpdate']
+
+        # 调试输出：在 chart1.xml 上打印完整 XML，便于确认 externalData 结构
+        try:
+            if os.path.basename(chart_path) == 'chart1.xml':
+                logger.debug('调试：打印 chart1.xml 修改后的 XML 树')
+                ET.dump(root)
+        except Exception as _:
+            pass
         
         # 清理可能干扰刷新的属性
         for attr in ['refreshError']:
@@ -1098,25 +975,16 @@ class P16PPTFiller:
                 logger.error(f"点级标签清理失败: {e}")
                 return False
             
-            # 4. 配置外部刷新与标签
+            # 4. 配置外部刷新与标签（传入 chart_path 以确保 r:id 正确）
             try:
-                self._configure_external_update_and_labels(root, namespaces)
+                self._configure_external_update_and_labels(root, namespaces, chart_path)
                 logger.debug("外部刷新配置成功")
             except Exception as e:
                 logger.error(f"外部刷新配置失败: {e}")
                 return False
             
-            # 5. 更新手工百分比标签数值和位置
-            try:
-                self._update_manual_percent_labels(root, namespaces, values_for_cache)
-                logger.debug("手工百分比标签更新成功")
-            except Exception as e:
-                logger.error(f"手工百分比标签更新失败: {e}")
-                return False
-            
-            # 6. 根据标签模式配置选择标签更新方式
+            # 5. 根据标签模式配置选择标签更新方式
             label_mode = self.config.get('label_mode', {})
-            manual_labels = label_mode.get('manual_labels', True)
             auto_labels = label_mode.get('auto_labels', False)
             
             if auto_labels:
@@ -1128,7 +996,7 @@ class P16PPTFiller:
                     logger.error(f"主趋势图表自动标签配置失败: {e}")
                     return False
             
-            # 7. 设置轴自动缩放
+            # 6. 设置轴自动缩放
             try:
                 self._set_value_axis_auto_scale(root, namespaces)
                 logger.debug("轴自动缩放设置成功")
@@ -1136,7 +1004,7 @@ class P16PPTFiller:
                 logger.error(f"轴自动缩放设置失败: {e}")
                 return False
             
-            # 8. 移除图表扩展
+            # 7. 移除图表扩展
             try:
                 self._remove_chart_extensions(root, namespaces)
                 logger.debug("图表扩展移除成功")
@@ -1147,7 +1015,7 @@ class P16PPTFiller:
             # 保存更新后的XML
             tree.write(chart_path, encoding='utf-8', xml_declaration=True)
             
-            # 9. 写入嵌入工作簿
+            # 8. 写入嵌入工作簿
             try:
                 self._write_embedded_workbook_from_chart(chart_path, root, namespaces, values_for_embedded)
                 logger.debug("嵌入工作簿写入成功")
@@ -1229,9 +1097,9 @@ class P16PPTFiller:
                 logger.error(f"渠道 {channel_name} 点级标签清理失败: {e}")
                 return False
             
-            # 4. 配置外部刷新与标签
+            # 4. 配置外部刷新与标签（传入 chart_path 以确保 r:id 正确）
             try:
-                self._configure_external_update_and_labels(root, namespaces)
+                self._configure_external_update_and_labels(root, namespaces, chart_path)
                 logger.debug(f"渠道 {channel_name} 外部刷新配置成功")
             except Exception as e:
                 logger.error(f"渠道 {channel_name} 外部刷新配置失败: {e}")
@@ -1239,17 +1107,7 @@ class P16PPTFiller:
             
             # 5. 根据标签模式配置选择标签更新方式
             label_mode = self.config.get('label_mode', {})
-            manual_labels = label_mode.get('manual_labels', True)
             auto_labels = label_mode.get('auto_labels', False)
-            
-            if manual_labels:
-                # 手工标签标注：基于位置识别标签百分比元素
-                try:
-                    self._update_manual_percent_labels(root, namespaces, values_for_cache, channel_name)
-                    logger.debug(f"渠道 {channel_name} 手工百分比标签更新成功")
-                except Exception as e:
-                    logger.error(f"渠道 {channel_name} 手工百分比标签更新失败: {e}")
-                    return False
             
             if auto_labels:
                 # 自动标签标注：隐藏/删除所有手工标签，启用自动标签
@@ -1413,6 +1271,9 @@ class P16PPTFiller:
         except Exception as e:
             logger.error(f"更新 [Content_Types].xml 失败: {e}")
             return False
+
+        # 3.2 清理旧的 .xlsb 嵌入对象，避免与 .xlsx 干扰导致文件损坏
+        self._cleanup_old_xlsb_embeddings()
         
         # 4. 重新打包PPT
         if not self.repackage_ppt():
@@ -1423,6 +1284,23 @@ class P16PPTFiller:
         
         logger.info("PPT填充流程完成")
         return True
+
+    def _cleanup_old_xlsb_embeddings(self):
+        """在 tmp/ppt/embeddings 中移除所有 .xlsb 文件，防止与 .xlsx 冲突。
+
+        说明：
+        - 模板通常包含 `WorkbookN.xlsb`，本流程改为写入并引用 `WorkbookN.xlsx`；
+        - 两者并存会使 PowerPoint 内容校验混淆，提示“文件已损坏”；
+        - 严格策略：若嵌入目录缺失则直接报错，不做兜底。
+        """
+        embeddings_dir = os.path.join(self.tmp_dir, 'ppt', 'embeddings')
+        if not os.path.isdir(embeddings_dir):
+            raise FileNotFoundError(f"缺少嵌入工作簿目录: {embeddings_dir}")
+        for fname in os.listdir(embeddings_dir):
+            if fname.lower().endswith('.xlsb'):
+                fpath = os.path.join(embeddings_dir, fname)
+                os.remove(fpath)
+                logger.info(f"已删除旧的 .xlsb 嵌入对象: {fname}")
 
 def main():
     """主函数"""

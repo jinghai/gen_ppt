@@ -97,4 +97,4 @@ quality_control:
 
 logging:
   level: INFO
-  file: p13_build.log
+  file: logs/build.log

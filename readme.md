@@ -1,134 +1,188 @@
-#  图表重填充工程 · 总 README
+# P16 项目 - 法国联想市场数据分析
 
-本工程在 `charts/` 目录内实现对模板 PPT 的图表数据重填充与单页构建，保证样式与文本完全一致。通过统一配置（`config.yaml`）指定时间范围与数据源更新图表数据，超出范围的数据沿用模板原文。
+## 项目概述
 
-说明：本仓库采用根路径结构（`input/`、`charts/`、`tools/`、`output/`），不使用历史文档中的 `ppt/` 前缀路径；如遇到旧文档中的 `ppt/...`，以本 README 为准。
+P16用于生成法国联想品牌的市场声量分析报告，包括主趋势图与渠道分解图。项目从离线数据库提取数据，生成Excel，并自动填充到PPT模板中；同时启用图表缓存自动刷新与自动数据标签，避免手工编辑。
 
-## 目录结构
+## 项目结构
+
 ```
-.
-├── charts/                 # 按页组织，每页包含 build.py 及多个 chart 子目录
-│   ├── p10/
-│   │   ├── build.py
-│   │   ├── chart8/
-│   │   └── chart9/
-│   └── ...
-├── config.yaml             # 统一配置（模板根、输出根、时间范围、数据源等）
-├── input/                  # 下载离线数据
-├── logs/                   # 运行日志（建议不入库）
-├── output/                 # 单页与最终合成 PPT 输出（建议不入库）
-├── tools/                  # 通用工具脚本
-│   ├── build_all.py        # 批量构建与（可选）合成
-│   ├── check_pptx.py       # 辅助检查/验证
-│   └── fill_p10.py         # 示例填充脚本（p10）
-├── readme.md               # 本文件
-├── requirements.txt        # 依赖定义
-├── 图表实现模式.md
-└── 实现方案.md
+charts/p16/
+├── config.yaml           # 项目配置（精简版，仅保留必要项）
+├── generate_excel.py     # 数据提取与Excel生成
+├── fill_from_excel.py    # PPT模板填充（自动刷新缓存与数据标签）
+├── build.py              # 主构建脚本
+├── output/               # 输出目录
+│   ├── p16_data.xlsx     # 生成的Excel数据
+│   └── p16-final.pptx    # 最终PPT文件
+├── tmp/                  # 模板解包与重打包临时目录
+└── README.md             # 项目文档
 ```
 
-## 环境要求
-- Python 3.10+（推荐 3.11）
-- macOS（已在此环境下开发/使用）
+## 配置说明
 
-### 建立虚拟环境
-```
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip setuptools wheel
-pip install -r requirements.txt
-```
-退出：`deactivate`
+### config.yaml 主要配置项（精简版）
 
-## 配置（config.yaml）
-- 时间范围：
-  - `update.start_date: "YYYY-MM-DD"`
-  - `update.end_date: "YYYY-MM-DD"`
-- 数据源：`data_sources`（例如 sqlite 路径、指标库等）
-- 项目根配置：
-  - `project.template_root`: 模板解压根目录（默认 `input/LRTBH-unzip`）
-  - `project.output_root`: 输出根目录（默认 `output`）
-- 其他：`channels`、`filters`、`fill_policy`（如 `pre_aug`、`aug_update`、`axis_day_base`、`dedup` 等）
+```yaml
+# 项目路径
+project:
+  template_ppt: ./p16.pptx
+  output_dir: ./output
+  tmp_dir: ./tmp
+  final_ppt: ./output/p16-final.pptx
 
-## 快速上手
-1) 准备模板
-- 将模板原文件放置于 `input/LRTBH.pptx`（可选）。
- - 将模板原文件放置于 `input/LRTBH.pptx`。
-- 解压模板到 `input/LRTBH-unzip/`（内部应包含 `ppt/charts` 等子目录）。
+# 数据源
+data_sources:
+  neticle_db: ../../input/neticle-v4-08.sqlite
+  metrics_db: ../../input/metrics-v4-08.db
 
-2) 创建并激活虚拟环境、安装依赖
-```
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# 过滤条件（法国联想）
+filters:
+  country_name: "France"
+  country_id: 39
+  brand_name: "lenovo"
+  target_month: "2025-08"
+
+# 渠道映射（示例）
+channels:
+  Forum:
+    - forum
+    - forum_aggregator
+  Online News:
+    - article
+    - frontpage
+    - article_aggregator
+    - frontpage_aggregator
+    - comment
+    - comment_article
+  Blog:
+    - blog
+    - blog_aggregator
+    - comment_blog
+  X:
+    - twitter
+    - twitter_reply
+    - twitter_retweet
+    - twitter_quoted
+  Instagram:
+    - instagram
+    - instagram_post
+    - instagram_comment
+    - instagram_reply
+  YouTube:
+    - youtube
+    - video
+
+# 图表映射
+chart_mapping:
+  chart1:
+    file: chart1.xml
+    type: main_trend
+    description: "主趋势图 - 联想声量份额趋势"
+  chart2:
+    file: chart2.xml
+    type: channel_breakdown
+    description: "Forum渠道分解图"
+  chart3:
+    file: chart3.xml
+    type: channel_breakdown
+    description: "Online News渠道分解图"
+  chart4:
+    file: chart4.xml
+    type: channel_breakdown
+    description: "Blog渠道分解图"
+  chart5:
+    file: chart5.xml
+    type: channel_breakdown
+    description: "Instagram渠道分解图"
+  chart6:
+    file: chart6.xml
+    type: channel_breakdown
+    description: "YouTube渠道分解图"
+  chart7:
+    file: chart7.xml
+    type: channel_breakdown
+    description: "X渠道分解图"
 ```
 
-3) 构建单页示例（以 p10 为例）
-- 如需先生成/更新数据或图表路径指针，可执行：
-```
-python tools/fill_p10.py
-```
-- 构建 p10：
-```
-python charts/p10/build.py
-```
-- 生成产物位于 `output/`（例如 `output/p10.pptx`）。
+> 说明：已移除旧版`time_ranges`、`replace_charts`、`final_mode`、`fill_policy`等未使用配置项；统一通过`filters.target_month`控制目标月份。
 
-4) 批量构建与合成
-```
-python tools/build_all.py
-```
-- 查看参数：
-```
-python tools/build_all.py -h
+## 使用方法
+
+### 1. 构建完整报告
+```bash
+python build.py build
 ```
 
-## 微模板批量生成（含 embeddings 新数据 .xlsx）
-- 目标：为 `charts/pXX` 下每个页面生成微模板目录，并在 `ppt/embeddings/` 生成对应的新数据 `.xlsx` 快照；保证样式与关系与原模板一致。
-- 旧/新数据约定：
-  - 保留模板中已有的嵌入（如 `*.xlsb`、`*.bin`、`*.xlsx`），这些作为“旧数据”；
-  - 额外生成 `embeddings/*.xlsx` 作为 `make_data` 后的新数据快照：
-    - 若原嵌入为 `*.xlsb`/`*.bin`，生成同名基底的 `*.xlsx`（不覆盖旧文件）；
-    - 若原嵌入本身就是 `*.xlsx`，生成 `{basename}__new.xlsx` 避免覆盖；
-
-### 使用方法
-- 指定页面批量生成（示例 p26/p27/p30）：
+### 2. 清理临时文件
+```bash
+python build.py clean
 ```
-python tools/batch_make_micro_templates.py --pages p26 p27 p30
+
+### 3. 查看帮助
+```bash
+python build.py help
 ```
-- 全量页面生成：
+
+### 4. 单独运行组件
+
+#### 生成Excel数据文件
+```bash
+python generate_excel.py
 ```
-python tools/batch_make_micro_templates.py
+
+#### 填充PPT模板
+```bash
+python fill_from_excel.py
 ```
-- 可选参数：
-  - `--skip-make-data` 跳过每页的 `make_data.py` 执行（默认执行，如存在）；
-  - `--zip-preview` 将微模板目录打包为 `charts/pXX/output/pXX.template.pptx`，便于离线核查（不涉及 HTTP 预览）。
 
-### 产出位置与说明
-- 微模板目录：`charts/pXX/template/`，包含 `ppt/slides`、`ppt/charts`、`ppt/embeddings`、`ppt/media`、`docProps`、`[Content_Types].xml` 等完整结构。
-- 新数据工作簿：位于 `charts/pXX/template/ppt/embeddings/`，每个嵌入对应一个工作簿；若同一嵌入被多个图表引用，则为每个图表生成一个 Sheet（如 `chart12` 或 `chart12-final`）。
-- 样式一致性：脚本不修改 `chart*.xml.rels` 的目标引用，仅新增 `.xlsx` 快照文件；因此最终样式与关系保持与原模板一致。
+执行后会在`tmp/`目录展开PPT并更新`ppt/charts/*.xml`：
+- 写入`numRef/numCache`以刷新图表缓存，避免“打开不变、编辑才变”。
+- 设置`externalData/autoUpdate=1`，引用Excel时自动刷新。
+- 启用自动数据标签（显示数值、位置`top`），去除人工文本标签。
 
-### 依赖与前置
-- 依赖：`requirements.txt` 已包含 `lxml>=5.2.1`、`openpyxl>=3.1`。
-- 模板路径：确保 `input/LRTBH-unzip/` 存在且为已解压的模板根目录（内部包含 `ppt/`）。
+## 输出文件
 
+### 1. p16_data.xlsx
+包含三个工作表：
+- **main_trend**: 主趋势数据（月份、SOV百分比）
+- **channel_breakdown**: 渠道分解数据（月份、渠道、SOV百分比）
+- **summary**: 数据摘要信息
 
-## 数据填充与修订约定
-- 每个图表目录可保留 `data.csv`（查询快照）与 `final_data.csv`（最终填充数据）。
-- 构建/填充脚本优先读取 `final_data.csv`，便于在特殊情况下手工修订数据。
-- 仅替换图表数据的 `numLit/strLit`，不变更样式与关系（rels）。
-- 图表基础 XML 的定位可通过各图表目录的 `chart_path.txt` 指针实现；若脚本可依据 `config.yaml` 自动解析路径，可不提交该文件。
+### 2. p16-final.pptx
+基于模板生成的最终PPT，包含自动刷新后的图表与数据标签。
 
-## 校验与排查
-- 基本校验：执行 `python tools/build_all.py`，确认输出是否生成且可打开。
-- 依赖校验：`pip check`、`python -c 'import lxml,click,pandas,yaml'` 等快速导入测试。
-- 输出预览：在 `output/` 目录下启动本地服务 `python3 -m http.server 8000`，浏览 `http://localhost:8000/` 查看生成文件。
+## 数据计算逻辑
 
-## 版本管理建议
-- 强烈建议在 `.gitignore` 中排除：`output/`、`logs/`、`.venv/`、`__pycache__/`、`*.pyc`、`.DS_Store`、`.pytest_cache/`、`.mypy_cache/`、`.idea/`、`.vscode/` 等。
-- `charts/**/` 中的中间产物按是否可重算进行选择性提交：`final_data.csv`（如为手工修订且构建必需）建议入库；`data.csv` 通常可不入库。
+### SOV (Share of Voice) 计算
+```
+SOV = (品牌提及数 / 总提及数) × 100%
+```
 
-## 现状与一致性说明
-- 本仓库包含工具脚本：`tools/build_all.py`、`tools/fill_p10.py`、`tools/check_pptx.py`、`tools/batch_make_micro_templates.py`。
-- 旧文档中提到的 `verify_unzip.py`、`scaffold_p10.py` 在当前仓库中未包含。如需这类能力，可在现有 `tools` 基础上补充，或以本 README 提供的等价流程替代。
+### 渠道SOV计算
+1. 根据`sourceLabel`映射到对应渠道
+2. 按渠道聚合提及数
+3. 计算每个渠道的SOV百分比
+
+### 数据填充策略
+- **真实数据**: 从数据库中提取的实际数据
+- **缺失处理**: 未映射的渠道将被过滤掉
+
+## 依赖要求
+
+```python
+pandas>=1.5.0
+openpyxl>=3.0.0
+python>=3.9（内置sqlite3、zipfile、xml.etree.ElementTree）
+```
+
+## 常见问题
+
+1. **数据库连接失败**：检查数据库文件路径是否正确且可读。
+2. **图表文件未找到**：确保PPT模板包含对应图表；脚本会继续处理其他部分。
+3. **配置文件错误**：确认YAML语法正确、必需项已设置。
+
+## 扩展指南
+- 添加新渠道：在`config.yaml`的`channels`部分添加映射
+- 添加新图表：在`chart_mapping`中添加新的图表配置
+- 更新月份：调整`filters.target_month`
