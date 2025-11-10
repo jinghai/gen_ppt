@@ -329,7 +329,13 @@ class P16DataGenerator:
         return df
 
     def extract_template_channel_breakdown(self, charts_dir: str) -> pd.DataFrame:
-        """从模板 chart2..7.xml 读取渠道分解数据（月份 + 渠道 + 值）。"""
+        """从模板 chart2..7.xml 读取渠道分解数据（月份 + 渠道 + 值）。
+
+        严格策略：
+        - 渠道名称优先使用配置中的显式 `channel` 字段；
+        - 若未提供 `channel`，尝试从 `description` 解析（仅限已知六个渠道）；
+        - 解析失败直接抛错，不做兜底，避免错位填充。
+        """
         mappings: Dict[str, dict] = self.config.get('chart_mapping', {})
         rows = []
         for chart_id, info in mappings.items():
@@ -340,9 +346,29 @@ class P16DataGenerator:
             if not os.path.exists(chart_path):
                 raise FileNotFoundError(f'渠道图表文件缺失: {chart_path}')
 
-            # 频道名从描述里提取（如 “Forum渠道分解图” -> “Forum”）
-            desc = info.get('description', '')
-            channel_name = desc.replace('渠道分解图', '').strip() or chart_id
+            # 1) 优先使用显式配置的渠道名称
+            allowed_channels = {'Forum', 'Online News', 'Blog', 'Instagram', 'YouTube', 'X'}
+            channel_name = (info.get('channel') or '').strip()
+            if channel_name:
+                if channel_name not in allowed_channels:
+                    raise ValueError(f"非法渠道名称: {channel_name}（chart_id={chart_id}）。允许值: {sorted(allowed_channels)}")
+            else:
+                # 2) 兼容旧配置：从描述解析渠道（严格限定关键词）
+                desc = (info.get('description') or '').strip()
+                if 'Forum' in desc:
+                    channel_name = 'Forum'
+                elif 'Online News' in desc:
+                    channel_name = 'Online News'
+                elif 'Blog' in desc:
+                    channel_name = 'Blog'
+                elif 'Instagram' in desc:
+                    channel_name = 'Instagram'
+                elif 'YouTube' in desc:
+                    channel_name = 'YouTube'
+                elif 'X' in desc or 'Twitter' in desc:
+                    channel_name = 'X'
+                else:
+                    raise RuntimeError(f"无法识别渠道名称（chart_id={chart_id}）。请在 config.yaml 的 chart_mapping 中显式提供 channel 字段")
 
             categories, values = self._parse_chart_xml(chart_path)
             if categories:

@@ -20,9 +20,9 @@ charts/p16/
 
 ## 依赖安装（严格管理包依赖）
 - Python 3.9+
-- 安装：
+- 使用项目根的依赖文件统一安装：
 ```bash
-pip install pandas openpyxl lxml pyyaml pyxlsb
+pip install -r ../../requirements.txt
 ```
 > 注：`pyxlsb` 仅在模板图表链接到嵌入工作簿 `.xlsb` 时需要；缺失时会明确报错。
 
@@ -74,7 +74,13 @@ channel_map:
 
 chart_mapping:
   chart1: {file: chart1.xml, type: main_trend}
-  chart2..chart7: {type: channel_breakdown}
+  # 说明：渠道图必须显式声明 `channel` 字段，以配置为权威来源，避免模板编号与视觉标签错位。
+  chart2: {file: chart2.xml, type: channel_breakdown, channel: "Forum"}
+  chart3: {file: chart3.xml, type: channel_breakdown, channel: "X"}
+  chart4: {file: chart4.xml, type: channel_breakdown, channel: "Instagram"}
+  chart5: {file: chart5.xml, type: channel_breakdown, channel: "Online News"}
+  chart6: {file: chart6.xml, type: channel_breakdown, channel: "Blog"}
+  chart7: {file: chart7.xml, type: channel_breakdown, channel: "YouTube"}
 
 label_mode:
   auto_labels: true
@@ -95,6 +101,7 @@ label_mode:
 - 嵌入工作簿读取失败或缺少 `pyxlsb`：安装依赖或检查模板是否链接到 `.xlsb`。
 - 月份标签无法识别：确保配置 `target_month` 有效，或修正模板类别标签（支持 `May '25`、`Aug 2025` 等常见格式）。
 - 所有输出均为模板值（未覆盖任何 computed）：脚本将报错，请检查品牌与月份过滤是否匹配数据库。
+- 渠道未识别：`chart_mapping` 未提供 `channel` 或解析失败会直接抛错并终止。
 
 ## 目录与文件规范
 - 临时文件仅在页面根 `tmp` 目录；不得随处生成临时文件。

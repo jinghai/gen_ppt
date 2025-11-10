@@ -31,7 +31,7 @@ channel_map:
   X: ["twitter", "tweet", "retweet", "quoted tweet", "twitter reply"]
   Instagram: ["instagram", "instagram post", "instagram comment", "instagram reply"]
   # YouTube（合并通用视频标签）
-  YouTube: ["youtube video", "video yt comment", "video yt reply", "video", "video aggregator"]
+  YouTube: ["youtube", "youtube video", "video yt comment", "video yt reply", "video", "video aggregator"]
 
 # 图表映射配置
 chart_mapping:
@@ -43,27 +43,38 @@ chart_mapping:
     file: chart2.xml
     type: channel_breakdown
     description: "Forum渠道分解图"
+    channel: "Forum"
   chart3:
     file: chart3.xml
     type: channel_breakdown
-    description: "Online News渠道分解图"
+    # 修正：根据页面关系，chart3 实际链接到 X 图表
+    description: "X渠道分解图"
+    channel: "X"
   chart4:
     file: chart4.xml
     type: channel_breakdown
-    description: "Blog渠道分解图"
+    # 修正：根据页面关系，chart4 实际链接到 Instagram 图表
+    description: "Instagram渠道分解图"
+    channel: "Instagram"
   chart5:
     file: chart5.xml
     type: channel_breakdown
-    description: "Instagram渠道分解图"
+    # 修正：模板中 chart5 实际用于 Online News 图表
+    description: "Online News渠道分解图"
+    channel: "Online News"
   chart6:
     file: chart6.xml
     type: channel_breakdown
-    description: "YouTube渠道分解图"
+    # 修正：模板中 chart6 实际用于 Blog 图表
+    description: "Blog渠道分解图"
+    channel: "Blog"
 
   chart7:
     file: chart7.xml
     type: channel_breakdown
-    description: "X渠道分解图"
+    # 修正：根据页面关系，chart7 实际链接到 YouTube 图表
+    description: "YouTube渠道分解图"
+    channel: "YouTube"
 
 # 标签标注配置（仅保留自动标注，统一隐藏/删除所有手工百分比标签）
 label_mode:

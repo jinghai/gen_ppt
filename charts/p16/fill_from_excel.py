@@ -1153,7 +1153,13 @@ class P16PPTFiller:
             return False
     
     def update_all_charts(self, main_trend_data, channel_data):
-        """更新所有图表"""
+        """更新所有图表（严格成功条件）
+
+        说明：
+        - 主趋势与各渠道图均需更新成功方可返回 True；任何一个失败则返回 False。
+        - 渠道名称从配置的显式 `channel` 字段优先识别；解析失败立即抛错并终止（不做兜底）。
+        - 更新包括覆盖 `numCache/strCache`、写入嵌入工作簿、配置自动标签与外部刷新。
+        """
         logger.info("开始更新所有图表...")
         
         # 查找图表文件
@@ -1194,28 +1200,45 @@ class P16PPTFiller:
         return success_count == total
     
     def extract_channel_from_chart_id(self, chart_id):
-        """从图表ID提取渠道名称"""
-        # 根据配置文件中的映射关系
+        """从图表ID提取渠道名称
+        
+        优先读取配置中的显式 `channel` 字段；若未提供则从 `description` 中解析。
+        严格策略：无法识别渠道时抛出异常，避免错误被掩盖。
+
+        返回：渠道名称（如 'Forum'、'Online News' 等）
+        """
         chart_mappings = self.config['chart_mapping']
-        
-        if chart_id in chart_mappings:
-            description = chart_mappings[chart_id]['description']
-            
-            # 从描述中提取渠道名称
-            if 'Forum' in description:
-                return 'Forum'
-            elif 'Online News' in description:
-                return 'Online News'
-            elif 'Blog' in description:
-                return 'Blog'
-            elif 'X' in description or 'Twitter' in description:
-                return 'X'
-            elif 'Instagram' in description:
-                return 'Instagram'
-            elif 'YouTube' in description:
-                return 'YouTube'
-        
-        return None
+
+        if chart_id not in chart_mappings:
+            raise KeyError(f"配置中不存在图表ID: {chart_id}")
+
+        info = chart_mappings[chart_id]
+        # 1) 优先使用显式的 channel 字段（避免模板文件编号与视觉标签不一致导致的错位）
+        channel = info.get('channel')
+        if channel:
+            # 进行受控校验：仅允许配置中的六个渠道，大小写敏感保持一致
+            allowed = {'Forum', 'Online News', 'Blog', 'Instagram', 'YouTube', 'X'}
+            if channel not in allowed:
+                raise ValueError(f"非法渠道名称: {channel}，允许值: {sorted(allowed)}")
+            return channel
+
+        # 2) 回退：从 description 解析（兼容旧配置）。
+        description = info.get('description', '') or ''
+        if 'Forum' in description:
+            return 'Forum'
+        if 'Online News' in description:
+            return 'Online News'
+        if 'Blog' in description:
+            return 'Blog'
+        if 'Instagram' in description:
+            return 'Instagram'
+        if 'YouTube' in description:
+            return 'YouTube'
+        if 'X' in description or 'Twitter' in description:
+            return 'X'
+
+        # 3) 坚决报错，不做兜底
+        raise RuntimeError(f"无法从配置中识别渠道: chart_id={chart_id}, description={description}")
     
     def repackage_ppt(self):
         """重新打包PPT文件"""
