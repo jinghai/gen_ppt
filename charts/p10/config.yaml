@@ -32,9 +32,9 @@ sentiment:
     neutral: "polarity = 0"               # 中性情感条件  
     negative: "polarity < 0"              # 消极情感条件
   colors:
-    positive: "#4CAF50"                   # 积极情感颜色（绿色）
-    neutral: "#FFC107"                    # 中性情感颜色（黄色）
-    negative: "#F44336"                   # 消极情感颜色（红色）
+    positive: "#009FA9"                   # 积极情感颜色（蓝绿色，模板）
+    neutral: "#FFBC42"                    # 中性情感颜色（琥珀黄，模板）
+    negative: "#D81159"                   # 消极情感颜色（洋红红，模板）
 
 # 图表配置
 charts:
@@ -42,9 +42,9 @@ charts:
     sheet_name: "PieData"
     labels: ["Positive", "Neutral", "Negative"]
     colors:
-      positive: "#4CAF50"                 # 积极情感颜色（绿色）
-      neutral: "#FFC107"                  # 中性情感颜色（黄色）
-      negative: "#F44336"                 # 消极情感颜色（红色）
+      positive: "#009FA9"                 # 积极情感颜色（蓝绿色，模板）
+      neutral: "#FFBC42"                  # 中性情感颜色（琥珀黄，模板）
+      negative: "#D81159"                 # 消极情感颜色（洋红红，模板）
   
   line_chart:
     sheet_name: "LineData"
@@ -59,6 +59,7 @@ output:
 # 填充策略配置
 fill_policy:
   axis_day_base: 20300                    # 散点图X轴基准值
+  use_config_colors: false                # 颜色策略：默认保留模板颜色；设为true则强制使用配置颜色
 
 # 质量控制
 quality:

@@ -22,9 +22,9 @@ P10页面专门用于分析Lenovo品牌在法国市场的情感表现，通过�
 ### 🎨 颜色配置
 - **统一颜色方案**: 确保所有图表元素颜色一致性
 - **情感颜色映射**:
-  - Positive（积极）: `#4CAF50` (绿色)
-  - Neutral（中性）: `#FFC107` (黄色)
-  - Negative（消极）: `#F44336` (红色)
+  - Positive（积极）: `#009FA9` (蓝绿色，模板)
+  - Neutral（中性）: `#FFBC42` (琥珀黄，模板)
+  - Negative（消极）: `#D81159` (洋红红，模板)
 - **应用范围**: 饼图填充、折线图线条、图例标识
 
 ### 🔍 筛选条件
@@ -105,12 +105,25 @@ sentiment_analysis:
 
 ### 颜色配置
 
+默认颜色策略为“保留模板颜色”（不覆盖模板中系列颜色），仅更新数据。若需强制使用配置颜色，可开启开关 `fill_policy.use_config_colors=true`。配置颜色在 `charts.pie_chart.colors` 下声明，折线/散点系列按 Positive/Neutral/Negative 的顺序复用相同颜色。
+
 ```yaml
-colors:
-  positive: "#4CAF50"     # 绿色 - 积极情感
-  neutral: "#FFC107"      # 黄色 - 中性情感
-  negative: "#F44336"     # 红色 - 消极情感
+charts:
+  pie_chart:
+    colors:
+      positive: "#009FA9"     # 蓝绿色（模板）- 积极情感
+      neutral: "#FFBC42"      # 琥珀黄（模板）- 中性情感
+      negative: "#D81159"     # 洋红红（模板）- 消极情感
+  line_chart:
+    lines: ["Positive", "Neutral", "Negative"]  # 系列顺序与颜色一致
+
+fill_policy:
+  use_config_colors: false      # 默认保留模板颜色；设为true则强制使用上述配置颜色
 ```
+
+说明：
+- 若模板缺少对应颜色节点（如 `a:ln/a:solidFill/a:srgbClr`），脚本将报错，不做兜底处理。
+- 当 `use_config_colors=false` 时，脚本不会写入颜色节点，完全保留模板原有系列颜色；当 `true` 时，严格按配置覆盖到饼图/折线/散点系列。
 
 ## 输出文件
 
@@ -220,7 +233,7 @@ colors:
       - `P_t = sum_{i=t-w+1..t} p_i`（窗口外视为 0，`min_periods=1`）
       - `N_t、NG_t` 同理，`DEN_t = P_t + N_t + NG_t`
       - `pos%_t = 100 * P_t / DEN_t`（`DEN_t=0` 时记 0），其余同理；保留 1 位小数。
-  - x 轴为连续数值：`axis_day_base + 序号`（来自 `fill_policy.axis_day_base`）。
+- x 轴为连续数值：`axis_day_base + 序号`（来自 `fill_policy.axis_day_base`）。该数值会写入嵌入工作簿 `LineData` 的首列 `X`，并作为散点图 `xVal` 的数据来源；`yVal` 分别绑定到 `Positive`、`Neutral`、`Negative` 列。
 
 ## 缺失数据兜底
 

@@ -118,12 +118,37 @@ class P13PPTFiller:
         return pie_df, line_df
 
     def _create_embedded_workbook(self, extracted_dir: Path, pie_df, line_df) -> Path:
+        """
+        创建嵌入式工作簿，并以图表可绑定的结构写入。
+
+        设计思路：
+        - 为饼图写入 Sheet `PieData`（列：Sentiment、Percentage），保留表头；
+        - 为折线/散点写入 Sheet `LineData`，首列增加数值型日轴列 `X`（axis_day_base + 序号），
+          其后依次为 `Date`、三条情绪列（按照 line_order 排序，若列不存在将报错）。
+        这样我们可以在图表 XML 中以公式（c:f）绑定到这些单元格区域，实现 PPT 内编辑表格即可刷新图表。
+        """
         embeddings_dir = extracted_dir / 'ppt' / 'embeddings'
         embeddings_dir.mkdir(parents=True, exist_ok=True)
         workbook_file = embeddings_dir / self.embedded_name
+
+        # 构造 LineData 的绑定友好结构
+        date_col = self.date_col
+        if date_col not in line_df.columns:
+            raise ValueError(f"LineData 缺少日期列: {date_col}")
+        n = len(line_df[date_col])
+        x_vals = [self.axis_day_base + i for i in range(n)]
+        ordered_cols = []
+        for s in self.line_order:
+            if s not in line_df.columns:
+                raise ValueError(f"LineData 缺少情绪列: {s}")
+            ordered_cols.append(s)
+        line_out = pd.DataFrame({'X': x_vals, date_col: list(line_df[date_col])})
+        for s in ordered_cols:
+            line_out[s] = list(line_df[s])
+
         with pd.ExcelWriter(workbook_file, engine='openpyxl') as writer:
             pie_df.to_excel(writer, sheet_name=self.charts.get('pie', {}).get('sheet_name', 'PieData'), index=False)
-            line_df.to_excel(writer, sheet_name=self.charts.get('line', {}).get('sheet_name', 'LineData'), index=False)
+            line_out.to_excel(writer, sheet_name=self.charts.get('line', {}).get('sheet_name', 'LineData'), index=False)
         self.logger.info(f"嵌入式工作簿已写入: {workbook_file}")
         return workbook_file
 
@@ -404,6 +429,164 @@ class P13PPTFiller:
             self.logger.error(f"更新折线/散点失败 {chart_file}: {e}")
             return False
 
+    # -------------------- externalData 与公式绑定 --------------------
+    def _get_workbook_rel_id(self, rels_file: Path) -> str:
+        """读取某个图表的关系文件，返回嵌入工作簿的 rId（关系类型为 package）。"""
+        if not rels_file.exists():
+            raise FileNotFoundError(f"缺少关系文件: {rels_file}")
+        tree = ET.parse(rels_file)
+        root = tree.getroot()
+        for rel in root.findall('.//{http://schemas.openxmlformats.org/package/2006/relationships}Relationship'):
+            typ = rel.get('Type', '')
+            if typ.endswith('/relationships/package'):
+                rid = rel.get('Id')
+                if not rid:
+                    raise ValueError(f"关系文件缺少 Id: {rels_file}")
+                return rid
+        raise ValueError(f"未找到指向工作簿的关系（package）: {rels_file}")
+
+    def _ensure_external_data(self, chart_file: Path, rel_id: str):
+        """确保 chart.xml 中存在 externalData 并指向给定 rId；同时开启 autoUpdate。"""
+        if not chart_file.exists():
+            raise FileNotFoundError(f"缺少图表文件: {chart_file}")
+        tree = ET.parse(chart_file)
+        root = tree.getroot()
+        ns_c = 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+        ns_r = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+        ext = root.find(f'.//{{{ns_c}}}externalData')
+        if ext is None:
+            # externalData 必须是 chartSpace 的直接子元素
+            ext = ET.SubElement(root, f'{{{ns_c}}}externalData')
+        ext.set(f'{{{ns_r}}}id', rel_id)
+        auto = ext.find(f'{{{ns_c}}}autoUpdate')
+        if auto is None:
+            auto = ET.SubElement(ext, f'{{{ns_c}}}autoUpdate')
+        auto.set('val', '1')
+        tree.write(chart_file, encoding='utf-8', xml_declaration=True)
+        self.logger.info(f"externalData 已绑定: {chart_file} -> {rel_id}")
+
+    def _update_pie_formulas(self, chart_file: Path, pie_rows: int, sheet_name: str = 'PieData'):
+        """
+        将饼图的数值与类别公式（c:f）绑定到嵌入工作簿的 PieData 区域：
+        - 值：B2:B{N+1}（Percentage）
+        - 类别：A2:A{N+1}（Sentiment）
+        如果模板中不存在 c:cat/strRef，则仅更新数值公式。
+        """
+        tree = ET.parse(chart_file)
+        root = tree.getroot()
+        ns = {'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'}
+        pie = root.find('.//c:pieChart', ns)
+        if pie is None:
+            raise ValueError("模板不包含饼图（pieChart）")
+        ser = pie.find('.//c:ser', ns)
+        if ser is None:
+            raise ValueError("饼图缺少数据系列 ser")
+        # 值公式
+        val = ser.find('.//c:val/c:numRef', ns)
+        if val is None:
+            raise ValueError("饼图缺少数值引用（c:val/c:numRef）")
+        f_el = val.find('c:f', ns)
+        if f_el is None:
+            f_el = ET.SubElement(val, '{http://schemas.openxmlformats.org/drawingml/2006/chart}f')
+        f_el.text = f"{sheet_name}!$B$2:$B${pie_rows + 1}"
+        # 类别公式（若有）
+        cat = ser.find('.//c:cat/c:strRef', ns)
+        if cat is not None:
+            f_cat = cat.find('c:f', ns)
+            if f_cat is None:
+                f_cat = ET.SubElement(cat, '{http://schemas.openxmlformats.org/drawingml/2006/chart}f')
+            f_cat.text = f"{sheet_name}!$A$2:$A${pie_rows + 1}"
+        tree.write(chart_file, encoding='utf-8', xml_declaration=True)
+        self.logger.info(f"饼图公式已绑定到 {sheet_name}")
+
+    def _update_line_formulas(self, chart_file: Path, line_rows: int, sheet_name: str = 'LineData'):
+        """
+        绑定折线或散点图的系列公式到嵌入工作簿的 LineData：
+        - 统一使用列方向：
+          X（数值日轴）= A2:A{N+1}；Date（字符串）= B2:B{N+1}；
+          各情绪列依次为 C/D/E2:E{N+1}（按 self.line_order 对应）。
+        - 若检测到 lineChart：cat 使用 B 列；val 使用 C/D/E。
+        - 若检测到 scatterChart：xVal 使用 A 列；yVal 使用 C/D/E。
+        """
+        tree = ET.parse(chart_file)
+        root = tree.getroot()
+        ns = {'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'}
+
+        line_chart = root.find('.//c:lineChart', ns)
+        scatter_chart = root.find('.//c:scatterChart', ns)
+        if line_chart is None and scatter_chart is None:
+            raise ValueError("模板不包含 lineChart 或 scatterChart")
+
+        def _range(col_letter: str) -> str:
+            return f"{sheet_name}!${col_letter}$2:${col_letter}${line_rows + 1}"
+
+        if line_chart is not None:
+            series_list = line_chart.findall('.//c:ser', ns)
+            for i, ser in enumerate(series_list):
+                if i >= len(self.line_order):
+                    break
+                # X 轴为日期（字符串）列 B
+                cat_ref = ser.find('.//c:cat/c:strRef', ns)
+                if cat_ref is None:
+                    cat = ser.find('.//c:cat', ns)
+                    if cat is None:
+                        cat = ET.SubElement(ser, '{http://schemas.openxmlformats.org/drawingml/2006/chart}cat')
+                    cat_ref = ET.SubElement(cat, '{http://schemas.openxmlformats.org/drawingml/2006/chart}strRef')
+                f_cat = cat_ref.find('c:f', ns)
+                if f_cat is None:
+                    f_cat = ET.SubElement(cat_ref, '{http://schemas.openxmlformats.org/drawingml/2006/chart}f')
+                f_cat.text = _range('B')
+
+                # Y 轴为对应情绪列 C/D/E
+                val_ref = ser.find('.//c:val/c:numRef', ns)
+                if val_ref is None:
+                    val_el = ser.find('.//c:val', ns)
+                    if val_el is None:
+                        val_el = ET.SubElement(ser, '{http://schemas.openxmlformats.org/drawingml/2006/chart}val')
+                    val_ref = ET.SubElement(val_el, '{http://schemas.openxmlformats.org/drawingml/2006/chart}numRef')
+                f_val = val_ref.find('c:f', ns)
+                if f_val is None:
+                    f_val = ET.SubElement(val_ref, '{http://schemas.openxmlformats.org/drawingml/2006/chart}f')
+                col = chr(ord('C') + i)  # C/D/E...
+                f_val.text = _range(col)
+
+            tree.write(chart_file, encoding='utf-8', xml_declaration=True)
+            self.logger.info("折线图公式已绑定到 LineData")
+            return
+
+        # scatterChart
+        series_list = scatter_chart.findall('.//c:ser', ns)
+        for i, ser in enumerate(series_list):
+            if i >= len(self.line_order):
+                break
+            # xVal 使用 A 列（数值日轴）
+            x_ref = ser.find('.//c:xVal/c:numRef', ns)
+            if x_ref is None:
+                x_el = ser.find('.//c:xVal', ns)
+                if x_el is None:
+                    x_el = ET.SubElement(ser, '{http://schemas.openxmlformats.org/drawingml/2006/chart}xVal')
+                x_ref = ET.SubElement(x_el, '{http://schemas.openxmlformats.org/drawingml/2006/chart}numRef')
+            f_x = x_ref.find('c:f', ns)
+            if f_x is None:
+                f_x = ET.SubElement(x_ref, '{http://schemas.openxmlformats.org/drawingml/2006/chart}f')
+            f_x.text = _range('A')
+
+            # yVal 使用对应情绪列 C/D/E
+            y_ref = ser.find('.//c:yVal/c:numRef', ns)
+            if y_ref is None:
+                y_el = ser.find('.//c:yVal', ns)
+                if y_el is None:
+                    y_el = ET.SubElement(ser, '{http://schemas.openxmlformats.org/drawingml/2006/chart}yVal')
+                y_ref = ET.SubElement(y_el, '{http://schemas.openxmlformats.org/drawingml/2006/chart}numRef')
+            f_y = y_ref.find('c:f', ns)
+            if f_y is None:
+                f_y = ET.SubElement(y_ref, '{http://schemas.openxmlformats.org/drawingml/2006/chart}f')
+            col = chr(ord('C') + i)
+            f_y.text = _range(col)
+
+        tree.write(chart_file, encoding='utf-8', xml_declaration=True)
+        self.logger.info("散点图公式已绑定到 LineData")
+
     # -------------------- 关系与内容类型 --------------------
     def _update_chart_rels(self, extracted_dir: Path, workbook_path: Path):
         target = f"../embeddings/{workbook_path.name}"
@@ -475,12 +658,22 @@ class P13PPTFiller:
             self._update_chart_rels(extracted_dir, workbook_path)
         self._update_content_types(extracted_dir, workbook_path)
 
-        # 更新图表 XML
+        # 更新图表 XML（缓存 + 公式 + externalData）
         charts_dir = extracted_dir / 'ppt' / 'charts'
         pie_chart = charts_dir / self.charts.get('pie', {}).get('chart_file', 'chart10.xml')
         line_chart = charts_dir / self.charts.get('line', {}).get('chart_file', 'chart11.xml')
         self._update_pie_chart_xml(pie_chart, pie_df)
         self._update_line_chart_xml(line_chart, line_df)
+
+        # 绑定公式与 externalData 指向嵌入工作簿
+        rels_dir = charts_dir / '_rels'
+        pie_rid = self._get_workbook_rel_id(rels_dir / f"{pie_chart.name}.rels")
+        line_rid = self._get_workbook_rel_id(rels_dir / f"{line_chart.name}.rels")
+        self._ensure_external_data(pie_chart, pie_rid)
+        self._ensure_external_data(line_chart, line_rid)
+        # 公式绑定（使 PPT 编辑嵌入工作簿时可刷新图表）
+        self._update_pie_formulas(pie_chart, pie_rows=len(pie_df), sheet_name=self.charts.get('pie', {}).get('sheet_name', 'PieData'))
+        self._update_line_formulas(line_chart, line_rows=len(line_df[self.date_col]), sheet_name=self.charts.get('line', {}).get('sheet_name', 'LineData'))
 
         # 打包
         self._repackage(extracted_dir)

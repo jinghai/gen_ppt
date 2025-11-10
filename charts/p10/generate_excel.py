@@ -157,11 +157,11 @@ class P10DataGenerator:
         pie_data = []
         
         for label in labels:
+            # 中文注释：移除 Count 列，仅保留百分比。避免后续填充使用计数导致视觉不一致。
             count = sentiment_counts.get(label, 0)
             percentage = (count / total_count * 100) if total_count > 0 else 0
             pie_data.append({
                 'Sentiment': label,
-                'Count': count,
                 'Percentage': round(percentage, 1)
             })
             
