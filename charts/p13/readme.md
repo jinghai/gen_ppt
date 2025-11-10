@@ -17,14 +17,14 @@
 ## 生成的数据（Excel）
 `charts/p13/output/p13_data.xlsx` 供人工校验与修改，包含：
 - `MetaData`：国家/品牌/时间范围及度量选项。
-- `PieData`：`sentiment,value,color`（饼图占比）。
-- `LineData`：`date,sentiment,value,color`（按日折线/散点）。
+- `PieData`：`Sentiment, Percentage`（饼图占比）。
+- `LineData`：`Date, Positive, Neutral, Negative`（按日趋势；列顺序固定）。
 
 修改 Excel 后再次运行填充脚本即可更新 PPT。
 
 ## 图表与颜色
-- 默认颜色映射：Positive `#2ECC71`、Negative `#E74C3C`、Neutral `#F1C40F`。
-- 系列顺序固定：Positive → Negative → Neutral。
+- 默认颜色映射（按模板）：Positive `#009FA9`、Neutral `#FFBC42`、Negative `#D81159`。
+- 系列顺序固定：Positive → Neutral → Negative。
 - 脚本同时更新图表数据缓存和系列颜色，确保打开 PPT 即显示新数据。
 
 ## 模板与临时目录

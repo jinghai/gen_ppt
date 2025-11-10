@@ -7,7 +7,8 @@ project:
   tmp_dir: tmp
 
 data_sources:
-  neticle_db: ../../input/neticle-v4-08.sqlite
+  # neticle_db: ../../input/neticle-v4-08.sqlite
+  neticle_db: ../../input/neticle-v5-08-etl.sqlite   # 舆情原始库（Neticle 数据）
   metrics_db: ../../input/metrics-v4-08.db
   neticle_schemas_doc: ../../input/neticle-schemas.md
   metrics_schemas_doc: ../../input/metrics-schemas.md
@@ -31,8 +32,8 @@ sentiment:
     positive_min: 0.05
     negative_max: -0.05
   colors:
-    Positive: "#00B8A9"
-    Neutral: "#FEC84D"
+    Positive: "#009FA9"
+    Neutral: "#FFBC42"
     Negative: "#D81159"
 
 charts:

@@ -55,10 +55,11 @@ class P13PPTFiller:
 
         # 颜色映射
         colors = self.sentiment_cfg.get('colors', {})
+        # 颜色严格与模板对齐：Positive=009FA9, Neutral=FFBC42, Negative=D81159
+        # 若配置缺失则使用模板色值作为默认，不做兜底为其它颜色。
         self.color_map = {
-            'Positive': colors.get('Positive', '#00B8A9').replace('#', ''),
-            'Neutral': colors.get('Neutral', '#FEC84D').replace('#', ''),
-            # Negative 改为更标准的红色（来自配置），避免偏粉
+            'Positive': colors.get('Positive', '#009FA9').replace('#', ''),
+            'Neutral': colors.get('Neutral', '#FFBC42').replace('#', ''),
             'Negative': colors.get('Negative', '#D81159').replace('#', ''),
         }
 
