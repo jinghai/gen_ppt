@@ -7,7 +7,8 @@ project:
   tmp_dir: "tmp"                        # 临时解压与中间文件目录（页面级隔离）
 
 data_sources:
-  neticle_db: ../../input/neticle-v4-08.sqlite     # 舆情原始库
+  # neticle_db: ../../input/neticle-v4-08.sqlite     # 舆情原始库
+  neticle_db: ../../input/neticle-v5-08-etl.sqlite   # 舆情原始库（Neticle 数据）
   metrics_db: ../../input/metrics-v4-08.db         # 指标聚合库
   neticle_table: mentions_wide                      # 宽表表名（主查询来源）
   date_column: createdAtUtcMs                       # 时间戳字段（毫秒）
