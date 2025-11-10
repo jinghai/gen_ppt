@@ -25,13 +25,13 @@ P29页面用于分析Lenovo France在不同媒体渠道的声量份额（Share o
 
 ### 1. 数据提取 (`generate_excel.py`)
 - **数据源**: 
-  - Neticle数据库: `../../input/neticle-v4-08.sqlite`
+  - Neticle数据库: `../../input/neticle-v5-08-etl.sqlite`
   - Metrics数据库: `../../input/metrics-v4-08.db`
 - **查询范围**: 2025年8月（UTC时间戳转换）
 - **过滤条件**: 
   - 国家: France
   - 品牌: 基于keyword_label小写部分匹配
-- **渠道映射**: 基于sourceName字段映射到6个目标渠道
+- **渠道映射**: 基于 `config.yaml` 的 `channel_map`，按字符串精确匹配（不区分大小写）映射到6个目标渠道；未匹配归为 `Other`。
 - **SOV计算**: 
   - 渠道级别: 品牌提及数 / 渠道总提及数 × 100%
   - 整体级别: 品牌总提及数 / 全部总提及数 × 100%
@@ -53,16 +53,16 @@ P29页面用于分析Lenovo France在不同媒体渠道的声量份额（Share o
   - bestFit字体大小调整
 - **文件打包**: 重新打包为可编辑的PPT文件
 
-## 渠道映射规则
+## 渠道映射规则（以 `config.yaml` 的 `channel_map` 为准）
 
-基于sourceName字段（不区分大小写）映射：
-- **Forum**: forum
-- **Online News**: news, online news
-- **Blog**: blog
-- **X**: x, twitter
-- **Instagram**: instagram
-- **YouTube**: youtube
-- **其他**: 未匹配的源归类为"Other"
+按 `sources.name`（不区分大小写）映射：
+- **Forum**: `forum`, `forum aggregator`
+- **Online News**: `article`, `frontpage`, `article aggregator`, `frontpage aggregator`, `comment`, `comment article`
+- **Blog**: `blog`, `blog aggregator`, `comment blog`
+- **X**: `twitter`, `tweet`, `retweet`, `quoted tweet`, `twitter reply`
+- **Instagram**: `instagram`, `instagram post`, `instagram comment`, `instagram reply`
+- **YouTube**（合并通用视频标签）: `youtube video`, `video yt comment`, `video yt reply`, `video`, `video aggregator`
+- **其他**: 未匹配的源归类为 `Other`
 
 ## 文件结构
 

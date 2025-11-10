@@ -1,57 +1,57 @@
 project:
-  name: P13-Engagement-Breakdown
-  page: p13
-  description: 法国市场分析-Engagement breakdown（月度情绪分布 + 日趋势）
-  template_file: p13.pptx
-  output_dir: output
-  tmp_dir: tmp
+  name: P13-Engagement-Breakdown  # 项目名称
+  page: p13  # 页面编号/目录名，应与本页目录一致
+  description: 法国市场分析-Engagement breakdown（月度情绪分布 + 日趋势）  # 页面描述
+  template_file: p13.pptx  # 模板文件名（位于本页目录）
+  output_dir: output  # 通用输出目录（本页数据生成脚本不使用；Excel 输出在页面目录）
+  tmp_dir: tmp  # 临时文件目录（相对本页目录）
 
 data_sources:
   # neticle_db: ../../input/neticle-v4-08.sqlite
   neticle_db: ../../input/neticle-v5-08-etl.sqlite   # 舆情原始库（Neticle 数据）
-  metrics_db: ../../input/metrics-v4-08.db
-  neticle_schemas_doc: ../../input/neticle-schemas.md
-  metrics_schemas_doc: ../../input/metrics-schemas.md
+  metrics_db: ../../input/metrics-v4-08.db  # 指标库（如需）
+  neticle_schemas_doc: ../../input/neticle-schemas.md  # Neticle 宽表结构说明（调试参考）
+  metrics_schemas_doc: ../../input/metrics-schemas.md  # 指标库结构说明（调试参考）
 
 time_range:
-  start_date: 2025-08-01
-  end_date: 2025-08-31
+  start_date: 2025-08-01  # 统计开始日期（含边界），格式 YYYY-MM-DD
+  end_date: 2025-08-31    # 统计结束日期（含边界）
 
 filters:
-  country_id: 39
-  country_name: France
-  brand_key: Lenovo
-  keyword_like: "%lenovo%"
+  country_id: 39         # 国家 ID（宽表字段候选：countryId/country_id/country）
+  country_name: France   # 国家名（仅用于 MetaData 展示）
+  brand_key: Lenovo      # 品牌关键字（仅用于 MetaData 展示）
+  keyword_like: "%lenovo%"  # SQL LIKE 模式，用于品牌过滤（keyword/keyword_label/keywordLabel）
 
 sentiment:
   labels:
-    - Positive
+    - Positive  # 情绪标签顺序（影响饼图与折线列顺序）
     - Neutral
     - Negative
   thresholds:
-    positive_min: 0.05
-    negative_max: -0.05
+    positive_min: 0.05   # polarity > 0.05 判定为 Positive
+    negative_max: -0.05  # polarity < -0.05 判定为 Negative；其余为 Neutral
   colors:
-    Positive: "#009FA9"
-    Neutral: "#FFBC42"
-    Negative: "#D81159"
+    Positive: "#009FA9"  # 模板色：正向（已与 p13 模板校准）
+    Neutral: "#FFBC42"   # 模板色：中性（已与 p13 模板校准）
+    Negative: "#D81159"  # 模板色：负向（已与 p13 模板校准）
 
 charts:
   pie:
-    chart_file: chart1.xml
-    sheet_name: PieData
-    label_column: Sentiment
-    value_column: Percentage
+    chart_file: chart1.xml        # 模板中饼图对应 chart 文件名
+    sheet_name: PieData           # 绑定工作表名，需与生成的 Excel 一致
+    label_column: Sentiment       # 饼图标签列名
+    value_column: Percentage      # 饼图数值列名（百分比）
   line:
-    chart_file: chart2.xml
-    sheet_name: LineData
-    date_column: Date
-    positive_column: Positive
-    neutral_column: Neutral
-    negative_column: Negative
+    chart_file: chart2.xml        # 模板中折线图对应 chart 文件名
+    sheet_name: LineData          # 绑定工作表名，需与生成的 Excel 一致
+    date_column: Date             # 日期列名（yyyy-MM-dd 文本）
+    positive_column: Positive     # 折线：Positive 百分比
+    neutral_column: Neutral       # 折线：Neutral 百分比
+    negative_column: Negative     # 折线：Negative 百分比
 
 engagement:
-  fields_candidates:
+  fields_candidates:  # 候选互动字段（存在才参与求和；行级）
     - likesCount
     - sharesCount
     - commentsCount
@@ -72,30 +72,30 @@ engagement:
     - tt_commentsCount
     - li_likesCount
     - li_commentsCount
-  impressions_fields:
+  impressions_fields:  # 候选曝光字段（存在则用于计算 IPM；行级）
     - impressions
     - viewCount
-  formula:
-    total_engagement: "sum(fields_candidates)"
-    ipm: "total_engagement / impressions * 1000"
+  formula:  # 公式说明（字符串用于文档；计算由脚本实现）
+    total_engagement: "sum(fields_candidates)"  # 行级：互动字段求和；按天汇总为当日总互动
+    ipm: "total_engagement / impressions * 1000"  # 行级公式；最终输出为日级 IPM=当日总互动/当日总曝光*1000（无曝光则留空）
 
 output:
   replace_charts:
-    - chart1.xml
-    - chart2.xml
-  excel_file_name: p13_data.xlsx
-  final_pptx_name: p13-final.pptx
+    - chart1.xml   # 需替换的饼图 chart 文件
+    - chart2.xml   # 需替换的折线 chart 文件
+  excel_file_name: p13_data.xlsx   # 生成的 Excel 文件名（输出在页面目录）
+  final_pptx_name: p13-final.pptx  # 生成的 PPT 文件名
 
 fill_policy:
-  axis_day_base: 20300
-  keep_external_data: true
-  external_data_format: xlsx
-  embedded_workbook_name: Microsoft_Excel_Worksheet1.xlsx
+  axis_day_base: 20300                 # 日期轴基准天数（与模板公式匹配）
+  keep_external_data: true             # 保留嵌入工作簿数据
+  external_data_format: xlsx           # 外链数据格式
+  embedded_workbook_name: Microsoft_Excel_Worksheet1.xlsx  # 嵌入工作簿名（需与模板一致）
 
 quality_control:
-  allow_missing_fields: true
-  min_points_for_line: 3
+  allow_missing_fields: true  # 允许候选列缺失：缺失列不参与求和
+  min_points_for_line: 3      # 折线图最少点数（不足不绘制）
 
 logging:
-  level: INFO
-  file: logs/build.log
+  level: INFO           # 日志级别
+  file: logs/build.log  # 日志文件路径（相对页面目录）

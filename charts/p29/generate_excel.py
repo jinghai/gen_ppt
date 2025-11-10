@@ -51,7 +51,10 @@ def extract_channel_data(config):
     brands_display = config['filters']['brands_display']
     # 构建品牌归一化映射：如 'hp' -> 'HP', 'asus' -> 'ASUS'
     brand_norm_map = {b.lower(): d for b, d in zip(brands, brands_display)}
-    channel_mapping = config['channels']
+    # 渠道映射改为严格使用 channel_map；缺失则抛错，避免兜底掩盖错误
+    if 'channel_map' not in config:
+        raise KeyError('配置缺少 channel_map，请在 charts/p29/config.yaml 中定义渠道映射')
+    channel_mapping = config['channel_map']
     
     # 时间范围转换
     start_ms = to_utc_ms(start_date)
@@ -61,7 +64,7 @@ def extract_channel_data(config):
     source_to_channel = {}
     for channel, sources in channel_mapping.items():
         for source in sources:
-            source_to_channel[source.lower()] = channel
+            source_to_channel[str(source).lower()] = channel
     
     # 查询数据
     with sqlite3.connect(neticle_db) as conn:

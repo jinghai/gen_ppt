@@ -40,35 +40,20 @@ filters:
   # 堆叠显示的“从上到下”顺序，用于数据与配色对齐（与 brands_display 一致）
   brand_stack_top_to_bottom: ["Lenovo","Dell","Apple","HP","ASUS","Acer","Samsung"]
 
-# 渠道映射：将 sources.name 归并为目标渠道
-channels:
-  Forum:
-    - forum
-    - forum_aggregator
-  Online News:
-    - article
-    - frontpage
-    - article_aggregator
-    - frontpage_aggregator
-    - comment
-    - comment_article
-  Blog:
-    - blog
-    - blog_aggregator
-    - comment_blog
-  X:
-    - twitter
-    - twitter_reply
-    - twitter_retweet
-    - twitter_quoted
-  Instagram:
-    - instagram
-    - instagram_post
-    - instagram_comment
-    - instagram_reply
-  YouTube:
-    - youtube
-    - video
+# 渠道映射：将 sources.name 归并为目标渠道（以 channel_map 为准）
+# 注：严格按字符串匹配（不区分大小写），未匹配的归为 Other。
+channel_map:
+  Forum: ["forum", "forum aggregator"]
+  Online News: [
+    "article", "frontpage",
+    "article aggregator", "frontpage aggregator",
+    "comment", "comment article"
+  ]
+  Blog: ["blog", "blog aggregator", "comment blog"]
+  X: ["twitter", "tweet", "retweet", "quoted tweet", "twitter reply"]
+  Instagram: ["instagram", "instagram post", "instagram comment", "instagram reply"]
+  # YouTube（合并通用视频标签）
+  YouTube: ["youtube video", "video yt comment", "video yt reply", "video", "video aggregator"]
 
 # 填充策略配置
 fill_policy:

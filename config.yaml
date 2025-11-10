@@ -22,45 +22,15 @@ filters:
   brands_display: ["Lenovo","Dell","HP","ASUS","Acer","Apple","Samsung"]  # 展示用名称顺序
 
 # 渠道映射：将 sources.name 归并为目标渠道（不再引用外部 YAML）。
-channels:
-  Forum:
-    - forum
-    - forum_aggregator
-  Online News:
-    - article
-    - frontpage
-    - article_aggregator
-    - frontpage_aggregator
-    - comment
-    - comment_article
-  Blog:
-    - blog
-    - blog_aggregator
-    - comment_blog
-  X:
-    - twitter
-    - twitter_reply
-    - twitter_retweet
-    - twitter_quoted
-  Instagram:
-    - instagram
-    - instagram_post
-    - instagram_comment
-    - instagram_reply
-  YouTube:
-    - youtube
-    - video
-
-fill_policy:
-  keep_original_for_missing: true            # 缺失日期/类别使用原始图表缓存；有数据则覆盖
-  pre_aug: keep_template_cache            # 填充前策略：保留模板缓存，避免无关资源丢失
-  aug_update: replace_or_merge            # 填充更新策略：替换或合并，视图表类型而定
-  axis_day_base: 20300                    # 日期轴基准（Excel 日期序列起点偏移）
-  dedup: mention_id                       # 去重依据（唯一标识）
-  sentiment_labels: [Positive, Neutral, Negative]  # 情感标签顺序（统一口径）
-  channel_order: ["Online News", "Forum", "Blog", "X", "Instagram", "YouTube"]  # 渠道排序（输出一致性）
-
-output:
-  final_ppt: ./output/LRTBH-final.pptx  # 最终合成 PPT 输出路径
-  final_mode: updated  # original|updated：控制最终合成是否替换图表
-#  replace_charts 迁移到 charts/p10/config.yaml（仅 p10 使用）
+channel_map:
+    Forum: ["forum", "forum aggregator"]
+    Online News: [
+      "article", "frontpage",
+      "article aggregator", "frontpage aggregator",
+      "comment", "comment article"
+    ]
+    Blog: ["blog", "blog aggregator", "comment blog"]
+    X: ["twitter", "tweet", "retweet", "quoted tweet", "twitter reply"]
+    Instagram: ["instagram", "instagram post", "instagram comment", "instagram reply"]
+    # YouTube（合并通用视频标签）
+    YouTube: ["youtube video", "video yt comment", "video yt reply", "video", "video aggregator"]
