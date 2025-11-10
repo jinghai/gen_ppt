@@ -439,16 +439,38 @@ class P16DataGenerator:
             # 空数据不兜底，返回空 DataFrame，后续用模板覆盖但整体无 computed 会抛错
             return pd.DataFrame()
 
-        # 渠道映射
-        channel_mapping = self.config['channels']
+        # 渠道映射：严格读取 channel_map；大小写不敏感精确匹配；未匹配归 Other
+        if 'channel_map' not in self.config:
+            raise KeyError("配置缺少 'channel_map'，请在 charts/p16/config.yaml 中配置渠道映射")
+        channel_mapping = self.config['channel_map']
+
+        # 归一化函数：仅做小写与去空白，不做符号替换（保持精确匹配）
+        def _norm(x) -> str:
+            try:
+                return str(x).strip().lower()
+            except Exception:
+                return ''
+
+        # 构建源名到渠道的查找表（大小写不敏感）
+        src_to_channel = {}
+        for ch, sources in channel_mapping.items():
+            if not isinstance(sources, (list, tuple)):
+                raise RuntimeError(f"channel_map 中渠道 '{ch}' 的源列表不合法: {type(sources)}")
+            for s in sources:
+                key = _norm(s)
+                if not key:
+                    continue
+                # 若重复定义同一源名，直接报错避免掩盖错误
+                if key in src_to_channel and src_to_channel[key] != ch:
+                    raise RuntimeError(f"channel_map 冲突: 源 '{s}' 同时映射到 '{src_to_channel[key]}' 与 '{ch}'")
+                src_to_channel[key] = ch
+
+        # 应用映射：未匹配归 Other
         def map_channel(src: str) -> str:
-            for ch, sources in channel_mapping.items():
-                if src in sources:
-                    return ch
-            return None
+            ch = src_to_channel.get(_norm(src))
+            return ch if ch else 'Other'
 
         df['channel'] = df['sourceLabel'].apply(map_channel)
-        df = df[df['channel'].notna()]
         if df.empty:
             return pd.DataFrame()
 

@@ -48,7 +48,7 @@ project:
   final_ppt: ./output/p16-final.pptx
 
 data_sources:
-  neticle_db: ../../input/neticle-v4-08.sqlite
+  neticle_db: ../../input/neticle-v5-08-etl.sqlite
   metrics_db: ../../input/metrics-v4-08.db
 
 filters:
@@ -57,7 +57,20 @@ filters:
   brand_name: "lenovo"
   target_month: "2025-08"
 
-channels: {Forum, Online News, Blog, X, Instagram, YouTube}
+# 渠道映射：将 sources.name 归并为目标渠道（以 channel_map 为准）
+# 规则：大小写不敏感的精确字符串匹配；未匹配归为 Other。
+channel_map:
+  Forum: ["forum", "forum aggregator"]
+  Online News: [
+    "article", "frontpage",
+    "article aggregator", "frontpage aggregator",
+    "comment", "comment article"
+  ]
+  Blog: ["blog", "blog aggregator", "comment blog"]
+  X: ["twitter", "tweet", "retweet", "quoted tweet", "twitter reply"]
+  Instagram: ["instagram", "instagram post", "instagram comment", "instagram reply"]
+  # YouTube（合并通用视频标签）
+  YouTube: ["youtube video", "video yt comment", "video yt reply", "video", "video aggregator"]
 
 chart_mapping:
   chart1: {file: chart1.xml, type: main_trend}

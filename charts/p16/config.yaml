@@ -18,35 +18,20 @@ filters:
   brand_name: "lenovo"                        # 品牌名称(小写)
   target_month: "2025-08"                     # 目标更新月份
 
-# 渠道映射配置
-channels:
-  Forum:
-    - forum
-    - forum_aggregator
-  Online News:
-    - article
-    - frontpage
-    - article_aggregator
-    - frontpage_aggregator
-    - comment
-    - comment_article
-  Blog:
-    - blog
-    - blog_aggregator
-    - comment_blog
-  X:
-    - twitter
-    - twitter_reply
-    - twitter_retweet
-    - twitter_quoted
-  Instagram:
-    - instagram
-    - instagram_post
-    - instagram_comment
-    - instagram_reply
-  YouTube:
-    - youtube
-    - video
+# 渠道映射：将 sources.name 归并为目标渠道（以 channel_map 为准）
+# 注：严格按字符串匹配（不区分大小写），未匹配的归为 Other。
+channel_map:
+  Forum: ["forum", "forum aggregator"]
+  Online News: [
+    "article", "frontpage",
+    "article aggregator", "frontpage aggregator",
+    "comment", "comment article"
+  ]
+  Blog: ["blog", "blog aggregator", "comment blog"]
+  X: ["twitter", "tweet", "retweet", "quoted tweet", "twitter reply"]
+  Instagram: ["instagram", "instagram post", "instagram comment", "instagram reply"]
+  # YouTube（合并通用视频标签）
+  YouTube: ["youtube video", "video yt comment", "video yt reply", "video", "video aggregator"]
 
 # 图表映射配置
 chart_mapping:
