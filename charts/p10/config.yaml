@@ -28,10 +28,15 @@ filters:
 # 情感分析配置
 sentiment:
   labels: ["Positive", "Neutral", "Negative"]  # 情感标签顺序
+  # 统一阀值配置（与 p13 保持一致）：
+  # 说明：实际分类以 thresholds 为准；classification 留作兼容不再使用。
+  thresholds:
+    positive_min: 0.05        # 情感正向阀值（>= 划为积极）
+    negative_max: -0.05       # 情感负向阀值（<= 划为消极）
   classification:
-    positive: "polarity > 0"              # 积极情感条件
-    neutral: "polarity = 0"               # 中性情感条件  
-    negative: "polarity < 0"              # 消极情感条件
+    positive: "polarity >= 0.05"          # （兼容项）积极情感条件
+    neutral: "-0.05 < polarity < 0.05"    # （兼容项）中性情感条件  
+    negative: "polarity <= -0.05"         # （兼容项）消极情感条件
   colors:
     positive: "#009FA9"                   # 积极情感颜色（蓝绿色，模板）
     neutral: "#FFBC42"                    # 中性情感颜色（琥珀黄，模板）

@@ -121,10 +121,26 @@ class P10DataGenerator:
             raise
             
     def process_sentiment_classification(self, df):
-        """处理情感分类"""
+        """处理情感分类
+        中文注释：
+        - 将原先的三分类规则（>0、=0、<0）改为基于配置阈值的分类：
+          Positive: polarity >= positive_min
+          Negative: polarity <= negative_max
+          Neutral:  介于两者之间
+        - 阈值来自 config.yaml 的 sentiment.thresholds，若缺失则严格报错。
+        """
         self.logger.info("开始处理情感分类...")
-        
+
         sentiment_config = self.config['sentiment']
+        thresholds = sentiment_config.get('thresholds')
+        if not thresholds or 'positive_min' not in thresholds or 'negative_max' not in thresholds:
+            # 不允许兜底，明确报错，避免掩盖错误配置
+            raise ValueError("配置缺少情感阀值：sentiment.thresholds.positive_min / sentiment.thresholds.negative_max")
+        try:
+            pos_min = float(thresholds['positive_min'])
+            neg_max = float(thresholds['negative_max'])
+        except Exception as e:
+            raise ValueError(f"情感阀值类型错误：{thresholds} -> {e}")
         
         # 添加日期列
         df['date'] = df['createdAtUtcMs'].apply(self._convert_timestamp_to_date)
@@ -132,14 +148,18 @@ class P10DataGenerator:
         
         # 情感分类
         def classify_sentiment(polarity):
-            if polarity > 0:
+            # 中文注释：按阀值进行分类，边界值（=pos_min 或 =neg_max）分别归入 Positive/Negative
+            if polarity is None:
+                return None
+            if polarity >= pos_min:
                 return 'Positive'
-            elif polarity == 0:
-                return 'Neutral'
-            else:
+            elif polarity <= neg_max:
                 return 'Negative'
-                
+            else:
+                return 'Neutral'
+
         df['sentiment'] = df['polarity'].apply(classify_sentiment)
+        df = df.dropna(subset=['sentiment'])
         
         self.logger.info(f"情感分布: {df['sentiment'].value_counts().to_dict()}")
         return df
