@@ -51,33 +51,15 @@ charts:
     negative_column: Negative     # 折线：Negative 百分比
 
 engagement:
-  fields_candidates:  # 候选互动字段（存在才参与求和；行级）
-    - likesCount
-    - sharesCount
-    - commentsCount
-    - reactionsCount
-    - retweetsCount
-    - fb_likesCount
-    - fb_sharesCount
-    - fb_commentsCount
-    - ig_likesCount
-    - ig_commentsCount
-    - tw_retweetsCount
-    - tw_likesCount
-    - tw_repliesCount
-    - yt_likesCount
-    - yt_commentsCount
-    - tt_likesCount
-    - tt_sharesCount
-    - tt_commentsCount
-    - li_likesCount
-    - li_commentsCount
-  impressions_fields:  # 候选曝光字段（存在则用于计算 IPM；行级）
-    - impressions
-    - viewCount
-  formula:  # 公式说明（字符串用于文档；计算由脚本实现）
-    total_engagement: "sum(fields_candidates)"  # 行级：互动字段求和；按天汇总为当日总互动
-    ipm: "total_engagement / impressions * 1000"  # 行级公式；最终输出为日级 IPM=当日总互动/当日总曝光*1000（无曝光则留空）
+  fields_candidates:  # 候选互动字段（存在才参与求和；行级，参考 docs/neticle数据说明.md）
+    - sumLikes      # 点赞总数
+    - sumShares     # 分享/转发总数
+    - sumComments   # 评论总数
+  formula:  # 公式说明（仅文档描述；计算由脚本实现）
+    total_engagement: "sum(fields_candidates)"  # 行级：互动字段求和（如 likes/shares/comments 等变体）
+    normalized_percentage:
+      pie: "各情绪参与度 / 全部参与度 * 100"  # 饼图：按参与度归一化百分比
+      line: "各情绪参与度 / 当日参与度总和 * 100"  # 折线：按参与度归一化百分比
 
 output:
   replace_charts:

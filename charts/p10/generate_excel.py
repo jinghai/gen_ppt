@@ -197,49 +197,56 @@ class P10DataGenerator:
         return pie_df
         
     def generate_line_chart_data(self, df):
-        """生成折线图数据"""
-        self.logger.info("生成折线图数据...")
-        
-        # 按日期和情感分组统计
+        """生成折线图数据（IndexGlobal 归一化）
+        中文说明：
+        - 改为“全局最大值归一化”。不再计算每日占比，而是按所有天×情感的计数全局最大值 M 归一化到 0-100。
+        - 公式：`Index(lbl, day) = 100 * count(lbl, day) / M`；若 `M=0` 则统一为 0.0。
+        - 这样同一日三条线不再相加为 100，更强调跨日强度的相对变化。
+        """
+        self.logger.info("生成折线图数据（IndexGlobal）...")
+
+        # 按日期和情感分组统计（计数作为强度）
         daily_sentiment = df.groupby(['date', 'sentiment']).size().unstack(fill_value=0)
-        
-        # 计算每日总数和百分比
-        daily_sentiment['Total'] = daily_sentiment.sum(axis=1)
-        
-        # 生成完整日期范围
+
+        # 生成完整日期范围（含头尾）
         start_date = datetime.strptime(self.config['update']['start_date'], '%Y-%m-%d')
         end_date = datetime.strptime(self.config['update']['end_date'], '%Y-%m-%d')
         date_range = pd.date_range(start=start_date, end=end_date, freq='D')
         date_strings = [d.strftime('%Y-%m-%d') for d in date_range]
-        
-        # 创建完整的数据框架
+
+        # 计算全局最大值 M（仅针对三条情感列）
         labels = self.config['charts']['line_chart']['lines']
+        cols_in_df = [l for l in labels if l in daily_sentiment.columns]
+        if cols_in_df:
+            try:
+                global_max = float(daily_sentiment[cols_in_df].max().max())
+            except Exception as e:
+                raise RuntimeError(f"计算全局最大值失败: {e}")
+        else:
+            global_max = 0.0
+
+        # 构建 LineData（指数值，保留1位小数）
         line_data = []
-        
         for date_str in date_strings:
             row_data = {'Date': date_str}
-            
             if date_str in daily_sentiment.index:
-                total = daily_sentiment.loc[date_str, 'Total']
                 for label in labels:
                     count = daily_sentiment.loc[date_str, label] if label in daily_sentiment.columns else 0
-                    percentage = (count / total * 100) if total > 0 else 0
-                    row_data[label] = round(percentage, 1)
+                    if global_max > 0:
+                        idx = 100.0 * count / global_max
+                    else:
+                        idx = 0.0
+                    row_data[label] = round(idx, 1)
             else:
-                # 缺失日期填充0
+                # 缺失日期填充 0
                 for label in labels:
                     row_data[label] = 0.0
-                    
             line_data.append(row_data)
-            
+
         line_df = pd.DataFrame(line_data)
-        
-        # 检查缺失天数
-        missing_days = len([d for d in date_strings if d not in daily_sentiment.index])
-        if missing_days > self.config['quality']['max_missing_days']:
-            self.logger.warning(f"缺失天数过多: {missing_days} > {self.config['quality']['max_missing_days']}")
-            
-        self.logger.info(f"折线图数据生成完成，共 {len(line_df)} 天")
+
+        # 质量提示：若无数据（M=0），仍返回全 0 的指数，便于模板加载；不视为错误。
+        self.logger.info(f"折线图(IndexGlobal)生成完成，共 {len(line_df)} 天，M={global_max}")
         return line_df
         
     def save_to_excel(self, pie_df, line_df):
@@ -270,7 +277,8 @@ class P10DataGenerator:
                     'Data_Range': [f"{self.config['update']['start_date']} to {self.config['update']['end_date']}"],
                     'Country': [self.config['filters']['country_name']],
                     'Brand': [self.config['filters']['brand_key']],
-                    'Total_Records': [len(pie_df) if not pie_df.empty else 0]
+                    'Total_Records': [len(pie_df) if not pie_df.empty else 0],
+                    'LineNormalization': ['IndexGlobal']
                 }
                 metadata_df = pd.DataFrame(metadata)
                 metadata_df.to_excel(writer, sheet_name='Metadata', index=False)

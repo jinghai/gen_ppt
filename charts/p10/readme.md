@@ -8,7 +8,7 @@ P10页面专门用于分析Lenovo品牌在法国市场的情感表现，通过�
 
 ### 📊 数据可视化
 - **饼图**: 展示整体情感分布（积极、中性、消极）
-- **折线图**: 展示每日情感趋势变化
+- **折线图**: 展示每日情感趋势变化（IndexGlobal 趋势指数，0-100）
 
 ### 🎯 数据来源
 - **数据库**: neticle-v5-08.sqlite
@@ -122,7 +122,7 @@ sentiment:
 ### 编辑图表数据（PowerPoint 中）
 - 在 PPT 中右键图表选择“编辑数据”，会打开嵌入的 Excel 工作簿。
 - 默认活动工作表为 `LineData`（右侧折线/散点图数据）。
-- 编辑右侧图表：在 `LineData` 表中修改列 `A`（日期），`C/D/E`（Positive/Negative/Neutral 的百分比），图形会即时刷新。
+- 编辑右侧图表：在 `LineData` 表中修改列 `A`（日期），`C/D/E`（Positive/Negative/Neutral 的指数值，IndexGlobal），图形会即时刷新。
 - 编辑左侧饼图：请切换到 `PieData` 工作表，修改 `Sentiment/Percentage`，图形会即时刷新。
 - 若 Excel 未自动刷新，请确认 PPT 的图表“外部数据自动更新”已启用（脚本已写入 `autoUpdate=1`）。
 
@@ -212,12 +212,9 @@ sentiment:
 - chart8（饼图）：
   - 分母 `denom = pos + neu + neg`；各类值除以 `denom` 后乘 100，保留 1 位小数。
 - chart9（折线）：
-  - 默认“每日占比”：对 `brand_metrics_day` 每天计算
-    - `p_t = positive_mentions(t)`，`n_t = neutral_mentions(t)`，`ng_t = negative_mentions(t)`
-    - `denom_t = p_t + n_t + ng_t`
-    - `pos%_t = 100 * p_t / denom_t`（`denom_t=0` 时记 0），`neu%_t`、`neg%_t` 同理；保留 1 位小数。
-  - 可选“平滑占比（滑窗）”：在 `charts/p10/config.yaml` 启用
-    - `chart9.smooth_percent: true`
+  - IndexGlobal 趋势指数：对 `brand_metrics_day` 每天的三类计数取全局最大值 `M = max_{d,l} count(l,d)`；
+    - 指数：`Index(lbl, t) = 100 * count(lbl, t) / M`；保留 1 位小数；
+    - 特性：同一日三线不再相加为 100，强调跨日相对强度。
     - `chart9.smooth_window: 7`（天）
     - 计算方式为“窗口滚动求和后再求占比”：
       - `P_t = sum_{i=t-w+1..t} p_i`（窗口外视为 0，`min_periods=1`）

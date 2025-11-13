@@ -6,19 +6,21 @@
 1. 确认数据与配置：
    - 已知数据位于 `input` 目录（详见 `p13/需求.md`）。
    - 页面级配置：`charts/p13/config.yaml`。
-2. 一键构建：
-   - 在仓库根目录执行：
-     - `python charts/p13/build.py`
-   - 构建过程：先生成 Excel，再填充模板，最后打包输出 `charts/p13/output/p13-final.pptx`。
-3. 手动分步（可选）：
-   - 只生成 Excel：`python charts/p13/generate_excel.py`
-   - 用 Excel 填充：`python charts/p13/fill_from_excel.py`
+2. 生成 Excel：
+   - `python charts/p13/generate_excel.py`
+3. 填充模板并打包 PPT：
+   - `python charts/p13/fill_from_excel.py`
 
 ## 生成的数据（Excel）
-`charts/p13/output/p13_data.xlsx` 供人工校验与修改，包含：
-- `MetaData`：国家/品牌/时间范围及度量选项。
-- `PieData`：`Sentiment, Percentage`（饼图占比）。
-- `LineData`：`Date, Positive, Neutral, Negative`（按日趋势；列顺序固定）。
+`charts/p13/p13_data.xlsx` 供人工校验与修改，包含：
+- `MetaData`：国家/品牌/时间范围及总参与度。
+- `PieData`：`Sentiment, Percentage`（按参与度加权的月度占比）。
+- `LineData`：`Date, Positive, Neutral, Negative`（IndexGlobal：对所有天×情绪的参与度取全局最大值归一化为 0-100 指数；列顺序固定）。
+- 审计表：
+  - `AuditDay`：每日参与度原值与百分比（可核对趋势指数来源的原值；指数不再是当日占比）。
+- `AuditRow`：示例原始行与派生参与度（最多 200 行），含 `PostId` 与 `Channel`（若宽表存在）。
+  - PostId 候选：`postId/post_id/mentionId/id/postID`；Channel 候选：`channel/source/platform/network/site`。
+  - `AuditMonth`：当月各情绪参与度与占比（核对 PieData）。
 
 修改 Excel 后再次运行填充脚本即可更新 PPT。
 

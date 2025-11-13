@@ -2,21 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
-P13 页面：Engagement breakdown 数据生成脚本
+P13 页面：Engagement breakdown 数据生成脚本（简化版）
 
-职责：
+职责（按用户要求简化）：
 - 读取页面级配置 config.yaml（仅引用本页配置，不依赖全局配置）；
-- 从 Neticle 宽表中按国家与关键词过滤数据，计算：
-  - 情绪分类（Positive/Neutral/Negative）与月度占比（用于饼图）；
-  - 每日情绪占比折线数据（Positive/Neutral/Negative）；
-  - Engagement（参与度）按天聚合与月度汇总：
-    total_engagement = 候选互动字段求和；
-    ipm = total_engagement / impressions * 1000（无曝光时置为 None）。
-- 将结果写入同一个 Excel：PieData、LineData、MetaData 三个工作表。
+- 从 Neticle 宽表中按国家与关键词过滤数据；
+- 计算“参与度”（Engagement）= 行级候选互动字段求和（如 likes/shares/comments 及平台变体）；
+- 基于参与度进行百分比归一化：
+  - 饼图：各情绪的参与度占整体参与度的百分比；
+  - 折线：每一天各情绪的参与度占当日总参与度的百分比；
+- 不再计算或输出曝光（impressions）与 IPM；
+- 将结果写入同一个 Excel：PieData（百分比）、LineData（百分比）、MetaData（元信息）。
 
-备注：
-- 尽量使用宽表。为兼容不同名称，自动探测 mentions_wide 表与可用字段；
-- 不打开大库做手动检查，运行时只按过滤条件读取必要列；
+备注（严格报错，不兜底）：
+- 自动探测 mentions_wide 表与字段，若候选互动字段一个都不存在，直接报错；
+- 运行时仅按过滤条件读取必要列；
 - 所有临时文件放置在页面级 tmp 目录。
 """
 
@@ -72,13 +72,15 @@ class P13DataGenerator:
         self.pos_min = float(thresholds.get('positive_min', 0.05))
         self.neg_max = float(thresholds.get('negative_max', -0.05))
 
-        # Engagement 字段候选
+        # 互动字段候选（仅用于计算 Engagement；不再使用曝光/不计算 IPM）
         self.eng_fields_candidates: List[str] = self.engagement_cfg.get('fields_candidates', [])
-        self.impr_fields_candidates: List[str] = self.engagement_cfg.get('impressions_fields', [])
 
         # 运行时信息
         self.wide_table_name: Optional[str] = None
         self.wide_columns: List[str] = []
+        # 审计附加列（动态匹配宽表候选列）
+        self.audit_post_id_col: Optional[str] = None
+        self.audit_channel_col: Optional[str] = None
 
     # ---------- 基础工具 ----------
     def _ensure_dirs(self):
@@ -194,13 +196,8 @@ class P13DataGenerator:
             if c in self.wide_columns:
                 cols.append(c)
 
-        # Engagement 候选列（存在才加入）
+        # 互动候选列（存在才加入）
         for c in self.eng_fields_candidates:
-            if c in self.wide_columns:
-                cols.append(c)
-
-        # 曝光候选列
-        for c in self.impr_fields_candidates:
             if c in self.wide_columns:
                 cols.append(c)
 
@@ -208,6 +205,12 @@ class P13DataGenerator:
         for c in ['countryId', 'country_id', 'country', 'keyword', 'keyword_label', 'keywordLabel']:
             if c in self.wide_columns:
                 cols.append(c)
+
+        # 审计附加列（若存在则选取）
+        if self.audit_post_id_col and self.audit_post_id_col in self.wide_columns:
+            cols.append(self.audit_post_id_col)
+        if self.audit_channel_col and self.audit_channel_col in self.wide_columns:
+            cols.append(self.audit_channel_col)
 
         # 去重保持顺序
         dedup = []
@@ -232,8 +235,12 @@ class P13DataGenerator:
             return 'Negative'
         return 'Neutral'
 
-    def _calc_row_engagement(self, row: Dict[str, Optional[float]]) -> Tuple[float, Optional[float]]:
-        # total_engagement
+    def _calc_row_engagement(self, row: Dict[str, Optional[float]]) -> float:
+        """
+        计算单行参与度：将配置中的候选互动字段求和。
+        - 若某字段不存在或值非数值，忽略该字段；
+        - 全部候选字段均不存在时，上层会统一进行严格校验并报错。
+        """
         total = 0.0
         for c in self.eng_fields_candidates:
             v = row.get(c)
@@ -242,25 +249,9 @@ class P13DataGenerator:
             try:
                 total += float(v)
             except Exception:
+                # 数据类型异常时跳过该字段，避免污染总和
                 continue
-
-        # impressions
-        impressions = 0.0
-        found_impr = False
-        for c in self.impr_fields_candidates:
-            v = row.get(c)
-            if v is None:
-                continue
-            try:
-                impressions += float(v)
-                found_impr = True
-            except Exception:
-                continue
-
-        ipm = None
-        if found_impr and impressions > 0:
-            ipm = (total / impressions) * 1000.0
-        return total, ipm
+        return total
 
     def _pick_created_ms(self, row: Dict) -> Optional[int]:
         for c in ['createdAtUtcMs', 'createdAtMs', 'createdAt']:
@@ -286,6 +277,19 @@ class P13DataGenerator:
             self.wide_table_name = self._detect_wide_table(con)
             self.wide_columns = self._load_columns(con, self.wide_table_name)
 
+            # 动态匹配审计附加列（仅用于展示，不参与计算；存在则纳入查询）
+            self.audit_post_id_col = self._pick_first_existing([
+                'postId', 'post_id', 'mentionId', 'id', 'postID'
+            ])
+            self.audit_channel_col = self._pick_first_existing([
+                'channel', 'source', 'platform', 'network', 'site'
+            ])
+
+            # 严格校验：至少存在一个互动候选字段，否则直接报错，避免退回“计数占比”造成误导
+            if not any(c in self.wide_columns for c in self.eng_fields_candidates):
+                raise RuntimeError(
+                    f"互动候选字段不存在：{self.eng_fields_candidates}。请检查数据库列名或更新配置。")
+
             where_sql, params = self._build_where()
             select_cols = self._select_columns()
             if not select_cols:
@@ -295,11 +299,12 @@ class P13DataGenerator:
             cur = con.cursor()
             cur.execute(sql, params)
 
-            # 聚合容器
-            pie_counts = {lbl: 0 for lbl in self.labels}
-            day_buckets: Dict[dt.date, Dict[str, float]] = {}
-            day_eng_total: Dict[dt.date, float] = {}
-            day_impr_total: Dict[dt.date, float] = {}
+            # 聚合容器（按参与度进行聚合与归一化）
+            pie_eng_sums = {lbl: 0.0 for lbl in self.labels}  # 饼图：各情绪参与度总和
+            day_eng_buckets: Dict[dt.date, Dict[str, float]] = {}  # 折线：每日各情绪参与度
+            # 审计示例行（最多 200 行，按时间顺序采样）
+            audit_row_max = 200
+            audit_rows: List[Dict] = []
 
             for row_t in cur.fetchall():
                 row = {select_cols[i]: row_t[i] for i in range(len(select_cols))}
@@ -318,26 +323,31 @@ class P13DataGenerator:
 
                 # 情绪分类
                 sentiment = self._classify_sentiment(row.get('polarity'))
-                pie_counts[sentiment] = pie_counts.get(sentiment, 0) + 1
-                if d not in day_buckets:
-                    day_buckets[d] = {lbl: 0.0 for lbl in self.labels}
-                day_buckets[d][sentiment] += 1.0
+                # 行级参与度
+                eng = self._calc_row_engagement(row)
+                # 饼图累计（按情绪累加参与度）
+                pie_eng_sums[sentiment] = pie_eng_sums.get(sentiment, 0.0) + eng
+                # 折线桶累计（每日情绪参与度）
+                if d not in day_eng_buckets:
+                    day_eng_buckets[d] = {lbl: 0.0 for lbl in self.labels}
+                day_eng_buckets[d][sentiment] += eng
 
-                # Engagement
-                total, ipm_row = self._calc_row_engagement(row)
-                day_eng_total[d] = day_eng_total.get(d, 0.0) + total
-                # impressions 聚合为总和（若存在）
-                # 这里复用 _calc_row_engagement 内部 impressions 计算逻辑
-                impressions_row = 0.0
-                for c in self.impr_fields_candidates:
-                    v = row.get(c)
-                    if v is None:
-                        continue
-                    try:
-                        impressions_row += float(v)
-                    except Exception:
-                        continue
-                day_impr_total[d] = day_impr_total.get(d, 0.0) + impressions_row
+                # 审计示例行：保留前 audit_row_max 行（含关键原始列与派生值）
+                if len(audit_rows) < audit_row_max:
+                    # 收集候选互动列的原始值
+                    cand_vals = {c: row.get(c) for c in self.eng_fields_candidates}
+                    # 审计附加列值（若存在）
+                    post_id_val = row.get(self.audit_post_id_col) if self.audit_post_id_col else None
+                    channel_val = row.get(self.audit_channel_col) if self.audit_channel_col else None
+                    audit_rows.append({
+                        'Date': d.strftime('%Y-%m-%d'),
+                        'Polarity': row.get('polarity'),
+                        'Sentiment': sentiment,
+                        'PostId': post_id_val,
+                        'Channel': channel_val,
+                        **cand_vals,
+                        'RowEngagement': eng,
+                    })
 
         finally:
             con.close()
@@ -348,52 +358,124 @@ class P13DataGenerator:
         ws_pie.title = self.charts.get('pie', {}).get('sheet_name', 'PieData')
         ws_line = wb.create_sheet(self.charts.get('line', {}).get('sheet_name', 'LineData'))
         ws_meta = wb.create_sheet('MetaData')
+        # 审计工作表
+        ws_audit_day = wb.create_sheet('AuditDay')
+        ws_audit_row = wb.create_sheet('AuditRow')
+        ws_audit_month = wb.create_sheet('AuditMonth')
 
-        # PieData：按月度总量计算百分比
-        total_mentions = sum(pie_counts.values())
+        # PieData：按总体参与度计算百分比（严格归一化）
+        total_engagement = sum(pie_eng_sums.values())
         ws_pie.append(['Sentiment', 'Percentage'])
         for lbl in self.labels:
-            count = pie_counts.get(lbl, 0)
-            pct = (count / total_mentions * 100.0) if total_mentions > 0 else 0.0
+            part = pie_eng_sums.get(lbl, 0.0)
+            pct = (part / total_engagement * 100.0) if total_engagement > 0 else 0.0
             ws_pie.append([lbl, round(pct, 2)])
 
-        # LineData：每日情绪百分比 + Engagement 附加列（便于校验）
-        ws_line.append(['Date', 'Positive', 'Neutral', 'Negative', 'EngagementTotal', 'Impressions', 'IPM'])
-        for d in sorted(day_buckets.keys()):
-            bucket = day_buckets[d]
-            day_total = sum(bucket.values())
-            pos = (bucket.get('Positive', 0.0) / day_total * 100.0) if day_total > 0 else 0.0
-            neu = (bucket.get('Neutral', 0.0) / day_total * 100.0) if day_total > 0 else 0.0
-            neg = (bucket.get('Negative', 0.0) / day_total * 100.0) if day_total > 0 else 0.0
-
-            eng_total = day_eng_total.get(d, 0.0)
-            impr_total = day_impr_total.get(d, 0.0)
-            ipm = (eng_total / impr_total * 1000.0) if impr_total and impr_total > 0 else None
+        # LineData：改为“全局最大值归一化（IndexGlobal）”
+        # 中文说明：
+        #   口径与附件示例一致，纵轴为指数(0-100)，而非“当日占比”。
+        #   公式：index(lbl, day) = 100 * eng(lbl, day) / max_{d,l}(eng(l, d))
+        #   特性：各日三条线不再相加为100；最大峰值约为100。
+        #   严格报错与保护：若全局最大值<=0，则指数全记为0。
+        ws_line.append(['Date', 'Positive', 'Neutral', 'Negative'])
+        # 计算全局最大值
+        all_values = []
+        for b in day_eng_buckets.values():
+            all_values.extend(list(b.values()))
+        global_max = max(all_values) if all_values else 0.0
+        for d in sorted(day_eng_buckets.keys()):
+            bucket = day_eng_buckets[d]
+            pos_val = bucket.get('Positive', 0.0)
+            neu_val = bucket.get('Neutral', 0.0)
+            neg_val = bucket.get('Negative', 0.0)
+            if global_max > 0:
+                pos_idx = 100.0 * pos_val / global_max
+                neu_idx = 100.0 * neu_val / global_max
+                neg_idx = 100.0 * neg_val / global_max
+            else:
+                pos_idx = neu_idx = neg_idx = 0.0
 
             ws_line.append([
                 d.strftime('%Y-%m-%d'),
-                round(pos, 2),
-                round(neu, 2),
-                round(neg, 2),
-                round(eng_total, 2),
-                round(impr_total, 2),
-                round(ipm, 2) if ipm is not None else None,
+                round(pos_idx, 2),
+                round(neu_idx, 2),
+                round(neg_idx, 2),
             ])
 
         # MetaData：写入基础信息
         meta_pairs = [
-            ('Page', self.project.get('page')), 
-            ('Country', self.filters.get('country_name')), 
-            ('CountryId', self.filters.get('country_id')), 
-            ('BrandKey', self.filters.get('brand_key')), 
-            ('KeywordLike', self.filters.get('keyword_like')), 
-            ('StartDate', self.time_range.get('start_date')), 
-            ('EndDate', self.time_range.get('end_date')), 
-            ('TotalMentions', total_mentions),
+            ('Page', self.project.get('page')),
+            ('Country', self.filters.get('country_name')),
+            ('CountryId', self.filters.get('country_id')),
+            ('BrandKey', self.filters.get('brand_key')),
+            ('KeywordLike', self.filters.get('keyword_like')),
+            ('StartDate', self.time_range.get('start_date')),
+            ('EndDate', self.time_range.get('end_date')),
+            ('TotalEngagement', total_engagement),
+            ('LineNormalization', 'IndexGlobal'),
+            ('WideTableName', self.wide_table_name),
+            ('SelectedColumns', ','.join(self._select_columns())),
+            ('AuditRowCount', len(audit_rows)),
         ]
         ws_meta.append(['Key', 'Value'])
         for k, v in meta_pairs:
             ws_meta.append([k, v])
+
+        # AuditDay：每日原始参与度与百分比（便于人工核对 LineData）
+        ws_audit_day.append(['Date', 'PositiveEng', 'NeutralEng', 'NegativeEng', 'TotalEng', 'Positive%', 'Neutral%', 'Negative%'])
+        for d in sorted(day_eng_buckets.keys()):
+            bucket = day_eng_buckets[d]
+            day_total = sum(bucket.values())
+            pos = bucket.get('Positive', 0.0)
+            neu = bucket.get('Neutral', 0.0)
+            neg = bucket.get('Negative', 0.0)
+            pos_pct = (pos / day_total * 100.0) if day_total > 0 else 0.0
+            neu_pct = (neu / day_total * 100.0) if day_total > 0 else 0.0
+            neg_pct = (neg / day_total * 100.0) if day_total > 0 else 0.0
+            ws_audit_day.append([
+                d.strftime('%Y-%m-%d'),
+                round(pos, 2),
+                round(neu, 2),
+                round(neg, 2),
+                round(day_total, 2),
+                round(pos_pct, 2),
+                round(neu_pct, 2),
+                round(neg_pct, 2),
+            ])
+
+        # AuditRow：示例原始行及派生值（便于人工核对行级参与度与情绪分类）
+        row_header = ['Date', 'Polarity', 'Sentiment']
+        if self.audit_post_id_col:
+            row_header.append('PostId')
+        if self.audit_channel_col:
+            row_header.append('Channel')
+        row_header += self.eng_fields_candidates + ['RowEngagement']
+        ws_audit_row.append(row_header)
+        for rec in audit_rows:
+            row_vals = [
+                rec.get('Date'),
+                rec.get('Polarity'),
+                rec.get('Sentiment'),
+            ]
+            if self.audit_post_id_col:
+                row_vals.append(rec.get('PostId'))
+            if self.audit_channel_col:
+                row_vals.append(rec.get('Channel'))
+            for c in self.eng_fields_candidates:
+                v = rec.get(c)
+                try:
+                    row_vals.append(float(v) if v is not None else 0.0)
+                except Exception:
+                    row_vals.append(0.0)
+            row_vals.append(rec.get('RowEngagement'))
+            ws_audit_row.append(row_vals)
+
+        # AuditMonth：当月各情绪参与度及百分比（便于人工核对 PieData）
+        ws_audit_month.append(['Sentiment', 'Engagement', 'Percentage'])
+        for lbl in self.labels:
+            part = pie_eng_sums.get(lbl, 0.0)
+            pct = (part / total_engagement * 100.0) if total_engagement > 0 else 0.0
+            ws_audit_month.append([lbl, round(part, 2), round(pct, 2)])
 
         # 保存 Excel
         wb.save(self.excel_file_path)
